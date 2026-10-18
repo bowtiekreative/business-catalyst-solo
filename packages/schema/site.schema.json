@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Catalyst Solo Site Map",
+  "type": "object",
+  "required": [
+    "name",
+    "domain",
+    "stack",
+    "pages",
+    "redirects",
+    "footerLinks",
+    "integrations"
+  ],
+  "properties": {
+    "name": { "type": "string" },
+    "domain": { "type": "string" },
+    "stack": { "type": "string" },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "route", "title", "desc", "nav", "secs"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "route": { "type": "string", "pattern": "^/" },
+          "title": { "type": "string" },
+          "desc": { "type": "string" },
+          "nav": { "type": "boolean" },
+          "file": { "type": "string" },
+          "secs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "code", "variant", "label", "formula", "p"],
+              "properties": {
+                "id": { "type": "string" },
+                "code": { "type": "string" },
+                "variant": { "type": "string" },
+                "label": { "type": "string" },
+                "formula": { "type": "string" },
+                "p": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "redirects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" }
+        }
+      }
+    },
+    "footerLinks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "href"],
+        "properties": {
+          "label": { "type": "string" },
+          "href": { "type": "string" }
+        }
+      }
+    },
+    "integrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "via", "env"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "via": { "type": "string" },
+          "env": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
