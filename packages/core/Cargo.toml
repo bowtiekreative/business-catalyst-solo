@@ -1,0 +1,11 @@
+[package]
+name = "catalyst-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+tempfile = "3"

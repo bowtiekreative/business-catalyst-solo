@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="shortcut icon" href="/favicon.ico" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+<link rel="manifest" href="/site.webmanifest" />
+</head>
+<body>
+<x-dc>
+<helmet>
+</helmet>
+<div style="position:relative;width:1440px;height:{{ h }}px;overflow:hidden;background:{{ bg }};color:{{ ink }};font-family:'Inter',sans-serif;font-weight:400;display:flex;flex-direction:column">
+
+<sc-if value="{{ isBar }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;align-items:center;justify-content:center;gap:24px;padding:0 64px;background:{{ barBg }};border-bottom:1px solid {{ hair }}">
+<span style="width:8px;height:8px;border-radius:50%;background:#3F6EE9;flex:none"></span>
+<span style="font-size:15px;letter-spacing:0.01em;color:{{ ink }}">{{ headline }}</span>
+<span style="font-size:14px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#3F6EE9">{{ cta }} &#8594;</span>
+<span style="margin-left:auto;font-size:18px;color:{{ muted }}">&#215;</span>
+</div>
+</sc-if>
+
+<sc-if value="{{ isNav }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;align-items:center;gap:24px;padding:0 64px;border-bottom:1px solid {{ hair }};background:{{ barBg }}">
+<div style="display:flex;align-items:center;gap:13px;flex:none">
+<img src="{{ mark }}" alt="Bow Tie Kreative" style="width:34px;height:34px;object-fit:contain;flex:none">
+<span style="font-size:20px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:{{ ink }}">Ryan <span style="color:#3F6EE9">Perez</span></span>
+</div>
+<div style="display:flex;align-items:center;gap:16px;margin-left:auto;flex:none">
+<span style="display:inline-flex;align-items:center;gap:11px;border:1px solid {{ menuBd }};color:{{ ink }};font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:13px 22px;border-radius:999px">Menu<span style="display:inline-flex;flex-direction:column;gap:4px;width:15px"><span style="height:1.5px;background:{{ ink }};border-radius:2px"></span><span style="height:1.5px;background:{{ ink }};border-radius:2px"></span></span></span>
+<span data-nav-cta="true" title="Two or three words. Hidden below 560px, where it moves into the Menu panel." style="display:inline-flex;align-items:center;gap:8px;background:#3F6EE9;color:#fff;font-size:15px;font-weight:600;padding:14px 26px;border-radius:999px;white-space:nowrap">{{ cta }}</span>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMega }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:24px;padding:0 64px;height:78px;border-bottom:1px solid {{ hair }};background:{{ barBg }};flex:none">
+<div style="display:flex;align-items:center;gap:13px;flex:none">
+<img src="{{ mark }}" alt="Bow Tie Kreative" style="width:32px;height:32px;object-fit:contain;flex:none">
+<span style="font-size:20px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:{{ ink }}">Ryan <span style="color:#3F6EE9">Perez</span></span>
+</div>
+<div style="display:flex;align-items:center;gap:16px;margin-left:auto;flex:none">
+<span style="display:inline-flex;align-items:center;gap:11px;border:1px solid #3F6EE9;color:{{ ink }};font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:13px 22px;border-radius:999px">Menu<span style="position:relative;width:15px;height:15px"><span style="position:absolute;left:0;right:0;top:7px;height:1.5px;background:{{ ink }};border-radius:2px;transform:rotate(45deg)"></span><span style="position:absolute;left:0;right:0;top:7px;height:1.5px;background:{{ ink }};border-radius:2px;transform:rotate(-45deg)"></span></span></span>
+<span data-nav-cta="true" title="Two or three words. Hidden below 560px, where it moves into the Menu panel." style="display:inline-flex;align-items:center;gap:8px;background:#3F6EE9;color:#fff;font-size:15px;font-weight:600;padding:14px 26px;border-radius:999px;white-space:nowrap">{{ cta }}</span>
+</div>
+</div>
+<div style="flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(0,1.1fr);gap:48px;padding:48px 64px;background:{{ surface }};border-bottom:1px solid {{ hair }}">
+<sc-for list="{{ groups }}" as="g" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:16px">
+<span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ g.title }}</span>
+<sc-for list="{{ g.links }}" as="l" hint-placeholder-count="4">
+<span style="font-size:16px;color:{{ body }}">{{ l.t }}</span>
+</sc-for>
+</div>
+</sc-for>
+<div style="display:flex;flex-direction:column;gap:14px">
+<div style="height:120px;border-radius:12px;overflow:hidden"><img src="{{ image }}" alt="" style="width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)"></div>
+<span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">Featured</span>
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.02em">{{ sub }}</span>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isHero }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)">
+<div style="display:flex;flex-direction:column;justify-content:center;gap:28px;padding:0 72px 0 120px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}"><span style="width:7px;height:7px;border-radius:50%;background:#3F6EE9"></span>{{ eyebrow }}</div>
+</sc-if>
+<sc-if value="{{ hasStat }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:baseline;gap:16px"><span style="font-size:86px;font-weight:600;letter-spacing:-0.055em;line-height:0.92;color:#3F6EE9">{{ stat }}</span><span style="font-size:15px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">{{ statLabel }}</span></div>
+</sc-if>
+<h1 style="margin:0;font-size:{{ h1 }}px;font-weight:600;letter-spacing:-0.05em;line-height:1.02;text-wrap:pretty">{{ headline }}</h1>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:19px;line-height:1.65;color:{{ body }};max-width:46ch">{{ sub }}</p>
+</sc-if>
+<sc-if value="{{ hasFields }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;gap:12px;max-width:520px">
+<sc-for list="{{ fields }}" as="fd" hint-placeholder-count="1">
+<span style="flex:1;border:1px solid {{ hair }};border-radius:8px;padding:16px 18px;font-size:16px;color:{{ muted }};background:{{ surface }}">{{ fd.t }}</span>
+</sc-for>
+<span style="display:inline-flex;align-items:center;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:16px 24px;border-radius:8px">{{ cta }}</span>
+</div>
+</sc-if>
+<sc-if value="{{ hasCtaRow }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:18px">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:16px 26px;border-radius:8px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;font-weight:600;color:{{ ink }};border-bottom:1px solid {{ hair }};padding-bottom:3px">{{ cta2 }}</span>
+</sc-if>
+</div>
+</sc-if>
+<sc-if value="{{ hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:14px;letter-spacing:0.06em;color:{{ muted }}">{{ note }}</span>
+</sc-if>
+</div>
+<div style="position:relative;overflow:hidden">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<div style="position:absolute;inset:0;background:linear-gradient(90deg,{{ bg }} 0%,transparent 32%)"></div>
+<sc-if value="{{ hasBadge }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;right:40px;bottom:40px;background:#3F6EE9;border-radius:12px;padding:20px 26px;display:flex;flex-direction:column;gap:4px"><span style="font-size:34px;font-weight:600;letter-spacing:-0.04em;line-height:1;color:#fff">{{ badge }}</span><span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.85)">{{ statLabel }}</span></div>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isHeroC }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:26px;padding:0 200px;position:relative">
+<div style="position:absolute;left:50%;top:-20%;width:70%;height:70%;transform:translateX(-50%);border-radius:50%;background:radial-gradient(circle,rgba(63,110,233,0.16) 0%,transparent 68%)"></div>
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }};position:relative"><span style="width:7px;height:7px;border-radius:50%;background:#3F6EE9"></span>{{ eyebrow }}</div>
+</sc-if>
+<h1 style="margin:0;font-size:{{ h1 }}px;font-weight:600;letter-spacing:-0.05em;line-height:1.02;position:relative;text-wrap:pretty">{{ headline }}</h1>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:19px;line-height:1.65;color:{{ body }};max-width:60ch;position:relative">{{ sub }}</p>
+</sc-if>
+<div style="display:flex;align-items:center;gap:18px;position:relative">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:16px 26px;border-radius:8px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;font-weight:600;color:{{ ink }};border-bottom:1px solid {{ hair }};padding-bottom:3px">{{ cta2 }}</span>
+</sc-if>
+</div>
+<sc-if value="{{ hasItems }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:40px;position:relative;padding-top:8px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<span style="font-size:14px;letter-spacing:0.06em;color:{{ it.color }}">{{ it.title }}</span>
+</sc-for>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ isHeroM }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;position:relative;overflow:hidden">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<div style="position:absolute;inset:0;background:linear-gradient(70deg,rgba(7,9,13,0.95) 0%,rgba(7,9,13,0.72) 38%,rgba(7,9,13,0.25) 72%,transparent 100%)"></div>
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;gap:26px;padding:0 120px;max-width:70%">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:10px;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(245,247,250,0.85)"><span style="width:7px;height:7px;border-radius:50%;background:#3F6EE9"></span>{{ eyebrow }}</div>
+</sc-if>
+<h1 style="margin:0;font-size:{{ h1 }}px;font-weight:600;letter-spacing:-0.05em;line-height:1.02;color:#F5F7FA;text-wrap:pretty">{{ headline }}</h1>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:19px;line-height:1.65;color:#C5C7CE;max-width:52ch">{{ sub }}</p>
+</sc-if>
+<div style="display:flex;align-items:center;gap:18px">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:16px 26px;border-radius:8px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;font-weight:600;color:#F5F7FA;border-bottom:1px solid rgba(245,247,250,0.35);padding-bottom:3px">{{ cta2 }}</span>
+</sc-if>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isStrip }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:34px;padding:0 120px;border-top:1px solid {{ hair }};border-bottom:1px solid {{ hair }}">
+<sc-if value="{{ hasHeadline }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }};text-align:center">{{ headline }}</span>
+</sc-if>
+<div style="display:grid;grid-template-columns:repeat({{ cols }},minmax(0,1fr));gap:40px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:8px;align-items:{{ align }}">
+<span style="font-size:52px;font-weight:600;letter-spacing:-0.05em;line-height:1;color:{{ it.color }}">{{ it.title }}</span>
+<span style="font-size:14px;letter-spacing:0.1em;text-transform:uppercase;color:{{ muted }};text-align:{{ align }}">{{ it.body }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isLogos }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:32px;padding:0 120px;border-top:1px solid {{ hair }};border-bottom:1px solid {{ hair }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }};text-align:center">{{ headline }}</span>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:36px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="6">
+<span style="font-size:23px;font-weight:600;letter-spacing:-0.02em;color:{{ it.logoColor }}">{{ it.title }}</span>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isGrid }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:44px;padding:0 120px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px;max-width:56%">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:46px;font-weight:600;letter-spacing:-0.045em;line-height:1.06;text-wrap:pretty">{{ headline }}</h2>
+</div>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:17px;line-height:1.65;color:{{ body }};max-width:38ch;text-align:right">{{ sub }}</p>
+</sc-if>
+</div>
+<div style="display:grid;grid-template-columns:repeat({{ cols }},minmax(0,1fr));gap:22px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:14px;background:{{ it.cardBg }};border:1px solid {{ it.cardBd }};border-radius:16px;padding:32px">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ it.numColor }}">{{ it.n }}</span>
+<span style="font-size:23px;font-weight:600;letter-spacing:-0.03em;line-height:1.2;text-wrap:pretty">{{ it.title }}</span>
+<span style="font-size:16px;line-height:1.6;color:{{ body }};text-wrap:pretty">{{ it.body }}</span>
+<sc-if value="{{ it.hasMeta }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:14px;letter-spacing:0.06em;text-transform:uppercase;color:#3F6EE9;border-top:1px solid {{ hair }};padding-top:14px;margin-top:auto">{{ it.meta }}</span>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isSplit }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:88px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:24px;order:{{ textOrder }}">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:44px;font-weight:600;letter-spacing:-0.045em;line-height:1.06;text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:17px;line-height:1.7;color:{{ body }}">{{ sub }}</p>
+</sc-if>
+<sc-if value="{{ hasItems }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:0">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<div style="display:flex;gap:16px;align-items:flex-start;padding:16px 0;border-top:1px solid {{ hair }}">
+<span style="font-size:13px;letter-spacing:0.1em;color:{{ it.numColor }};padding-top:4px;min-width:26px">{{ it.n }}</span>
+<div style="display:flex;flex-direction:column;gap:4px">
+<span style="font-size:18px;font-weight:600;letter-spacing:-0.02em;color:{{ it.color }}">{{ it.title }}</span>
+<sc-if value="{{ it.hasBody }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:15px;line-height:1.6;color:{{ body }}">{{ it.body }}</span>
+</sc-if>
+</div>
+</div>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{ hasCtaRow }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;align-items:center;gap:18px">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:15px 24px;border-radius:8px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;font-weight:600;color:{{ ink }};border-bottom:1px solid {{ hair }};padding-bottom:3px">{{ cta2 }}</span>
+</sc-if>
+</div>
+</sc-if>
+</div>
+<div style="position:relative;height:74%;border-radius:24px;overflow:hidden;order:{{ mediaOrder }}">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<sc-if value="{{ hasBadge }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:28px;bottom:28px;background:{{ surface }};border:1px solid {{ hair }};border-radius:12px;padding:16px 20px;display:flex;flex-direction:column;gap:2px"><span style="font-size:26px;font-weight:600;letter-spacing:-0.03em;color:#3F6EE9">{{ badge }}</span><span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">{{ statLabel }}</span></div>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isRail }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:44px;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:14px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:44px;font-weight:600;letter-spacing:-0.045em;line-height:1.06;max-width:24ch;text-wrap:pretty">{{ headline }}</h2>
+</div>
+<div style="display:grid;grid-template-columns:repeat({{ cols }},minmax(0,1fr));gap:0">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:14px;padding:28px 32px 0 0;border-top:1px solid {{ it.railBd }};position:relative">
+<span style="position:absolute;left:0;top:-6px;width:11px;height:11px;border-radius:50%;background:{{ it.dot }}"></span>
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ it.numColor }}">{{ it.n }}</span>
+<span style="font-size:22px;font-weight:600;letter-spacing:-0.03em;line-height:1.2;color:{{ it.color }};text-wrap:pretty">{{ it.title }}</span>
+<sc-if value="{{ it.hasBody }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:15px;line-height:1.6;color:{{ body }};text-wrap:pretty">{{ it.body }}</span>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isTable }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:36px;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:14px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:42px;font-weight:600;letter-spacing:-0.045em;line-height:1.06">{{ headline }}</h2>
+</div>
+<div style="display:flex;flex-direction:column">
+<div style="display:grid;grid-template-columns:minmax(0,1.4fr) repeat({{ colCount }},minmax(0,1fr));gap:32px;padding-bottom:16px;border-bottom:1px solid rgba(245,247,250,0.25)">
+<span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">{{ rowLabel }}</span>
+<sc-for list="{{ heads }}" as="hd" hint-placeholder-count="3">
+<span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:{{ hd.color }}">{{ hd.t }}</span>
+</sc-for>
+</div>
+<sc-for list="{{ rows }}" as="r" hint-placeholder-count="4">
+<div style="display:grid;grid-template-columns:minmax(0,1.4fr) repeat({{ colCount }},minmax(0,1fr));gap:32px;padding:20px 0;border-bottom:1px solid {{ hair }}">
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.02em">{{ r.a }}</span>
+<span style="font-size:16px;color:{{ muted }}">{{ r.b }}</span>
+<sc-if value="{{ r.hasC }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;color:{{ body }}">{{ r.c }}</span>
+</sc-if>
+<sc-if value="{{ r.hasD }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;font-weight:600;color:#3F6EE9">{{ r.d }}</span>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isList }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,0.8fr) minmax(0,1.4fr);gap:88px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:46px;font-weight:600;letter-spacing:-0.05em;line-height:1.04;text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ false }}">
+<p style="margin:0;font-size:17px;line-height:1.65;color:{{ body }}">{{ sub }}</p>
+</sc-if>
+</div>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:10px;padding:22px 0;border-top:1px solid {{ hair }}">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:24px">
+<span style="font-size:20px;font-weight:600;letter-spacing:-0.025em;color:{{ it.color }};text-wrap:pretty">{{ it.title }}</span>
+<span style="font-size:20px;color:{{ it.numColor }};flex:none">{{ it.sign }}</span>
+</div>
+<sc-if value="{{ it.hasBody }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;line-height:1.65;color:{{ body }};max-width:62ch">{{ it.body }}</span>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isForm }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:88px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:22px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:44px;font-weight:600;letter-spacing:-0.05em;line-height:1.04;text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:17px;line-height:1.7;color:{{ body }}">{{ sub }}</p>
+</sc-if>
+<sc-if value="{{ hasItems }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<span style="display:flex;gap:12px;font-size:16px;color:{{ it.color }}"><span style="color:#3F6EE9">&#8594;</span>{{ it.title }}</span>
+</sc-for>
+</div>
+</sc-if>
+</div>
+<div style="display:flex;flex-direction:column;gap:16px;background:{{ surface }};border:1px solid {{ hair }};border-radius:20px;padding:40px">
+<sc-if value="{{ hasBadge }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:12px;padding-bottom:6px">
+<span style="flex:1;height:4px;border-radius:2px;background:#3F6EE9"></span>
+<span style="flex:1;height:4px;border-radius:2px;background:{{ hair }}"></span>
+<span style="flex:1;height:4px;border-radius:2px;background:{{ hair }}"></span>
+<span style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:{{ muted }}">{{ badge }}</span>
+</div>
+</sc-if>
+<sc-for list="{{ fields }}" as="fd" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:7px">
+<span style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:{{ muted }}">{{ fd.label }}</span>
+<span style="border:1px solid {{ hair }};border-radius:8px;padding:15px 16px;font-size:16px;color:{{ muted }};background:{{ bg }}">{{ fd.t }}</span>
+</div>
+</sc-for>
+<span style="display:inline-flex;align-items:center;justify-content:center;gap:9px;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:16px 24px;border-radius:8px;margin-top:6px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+<sc-if value="{{ hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:13px;line-height:1.6;color:{{ muted }};text-align:center">{{ note }}</span>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isBand }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;position:relative;background:#3F6EE9;display:flex;flex-direction:column;justify-content:center;gap:24px;padding:0 120px;overflow:hidden">
+<div style="position:absolute;right:-10%;bottom:-40%;width:60%;height:120%;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,0.16) 0%,transparent 66%)"></div>
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.85);position:relative">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:56px;font-weight:600;letter-spacing:-0.05em;line-height:1.02;color:#fff;max-width:22ch;position:relative;text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:18px;line-height:1.6;color:rgba(255,255,255,0.9);max-width:52ch;position:relative">{{ sub }}</p>
+</sc-if>
+<div style="display:flex;align-items:center;gap:20px;position:relative">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#fff;color:#07090D;font-size:16px;font-weight:600;padding:16px 26px;border-radius:8px">{{ cta }}<span style="color:#3F6EE9">&#8594;</span></span>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:16px;font-weight:600;color:#fff;border-bottom:1px solid rgba(255,255,255,0.5);padding-bottom:3px">{{ cta2 }}</span>
+</sc-if>
+<sc-if value="{{ hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:14px;letter-spacing:0.06em;text-transform:uppercase;color:rgba(255,255,255,0.85);margin-left:8px">{{ note }}</span>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isQuote }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:72px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:28px">
+<span style="font-size:64px;font-weight:600;line-height:0.5;color:#3F6EE9">&#8220;</span>
+<p style="margin:0;font-size:40px;font-weight:600;letter-spacing:-0.04em;line-height:1.16;text-wrap:pretty">{{ quote }}</p>
+<sc-if value="{{ hasBadge }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:15px;letter-spacing:0.08em;text-transform:uppercase;color:#3F6EE9">{{ badge }}</span>
+</sc-if>
+<div style="display:flex;flex-direction:column;gap:4px;border-left:2px solid #3F6EE9;padding-left:20px">
+<span style="font-size:19px;font-weight:600;letter-spacing:-0.02em">{{ speaker }}</span>
+<span style="font-size:16px;color:{{ body }}">{{ org }}</span>
+</div>
+</div>
+<div style="position:relative;height:72%;border-radius:24px;overflow:hidden">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isGallery }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:32px;padding:0 120px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:40px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:42px;font-weight:600;letter-spacing:-0.045em;line-height:1.06">{{ headline }}</h2>
+</div>
+<span style="font-size:15px;font-weight:600;color:{{ muted }}">{{ cta }} &#8594;</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat({{ cols }},minmax(0,1fr));gap:18px;height:56%">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="position:relative;border-radius:16px;overflow:hidden">
+<img src="{{ it.img }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<div style="position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,rgba(7,9,13,0.9) 100%)"></div>
+<div style="position:absolute;left:20px;right:20px;bottom:18px;display:flex;flex-direction:column;gap:3px">
+<span style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ it.body }}</span>
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.02em;color:#F5F7FA;text-wrap:pretty">{{ it.title }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isPricing }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:38px;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:12px;align-items:center;text-align:center">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:42px;font-weight:600;letter-spacing:-0.045em;line-height:1.06">{{ headline }}</h2>
+</div>
+<div style="display:grid;grid-template-columns:repeat({{ cols }},minmax(0,1fr));gap:20px">
+<sc-for list="{{ tiers }}" as="t" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:18px;background:{{ t.cardBg }};border:1px solid {{ t.cardBd }};border-radius:18px;padding:32px">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:{{ t.labelColor }}">{{ t.name }}</span>
+<sc-if value="{{ t.featured }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;background:#3F6EE9;color:#fff;padding:5px 9px;border-radius:5px">Most booked</span>
+</sc-if>
+</div>
+<div style="display:flex;align-items:baseline;gap:8px">
+<span style="font-size:44px;font-weight:600;letter-spacing:-0.05em;line-height:1;color:{{ t.priceColor }}">{{ t.price }}</span>
+<span style="font-size:14px;color:{{ muted }}">{{ t.unit }}</span>
+</div>
+<span style="font-size:15px;line-height:1.6;color:{{ body }}">{{ t.desc }}</span>
+<div style="display:flex;flex-direction:column;gap:9px;margin-top:auto">
+<sc-for list="{{ t.feats }}" as="ft" hint-placeholder-count="3">
+<span style="display:flex;gap:10px;font-size:15px;color:{{ body }}"><span style="color:#3F6EE9">&#8594;</span>{{ ft.t }}</span>
+</sc-for>
+</div>
+<span style="display:inline-flex;align-items:center;justify-content:center;gap:8px;background:{{ t.btnBg }};color:{{ t.btnFg }};border:1px solid {{ t.btnBd }};font-size:15px;font-weight:600;padding:14px 20px;border-radius:8px;margin-top:6px">{{ t.cta }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isDash }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:28px;padding:0 120px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:40px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:40px;font-weight:600;letter-spacing:-0.045em;line-height:1.06">{{ headline }}</h2>
+</div>
+<sc-if value="{{ hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="display:inline-flex;align-items:center;gap:9px;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;color:{{ muted }}"><span style="width:8px;height:8px;border-radius:50%;background:#3F6EE9"></span>{{ note }}</span>
+</sc-if>
+</div>
+<div style="display:grid;grid-template-columns:repeat({{ cols }},minmax(0,1fr));gap:18px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:8px;background:{{ surface }};border:1px solid {{ hair }};border-radius:14px;padding:24px">
+<span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">{{ it.body }}</span>
+<span style="font-size:38px;font-weight:600;letter-spacing:-0.045em;line-height:1;color:{{ it.color }}">{{ it.title }}</span>
+<span style="font-size:13px;color:{{ it.numColor }}">{{ it.meta }}</span>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;align-items:flex-end;gap:10px;height:22%;padding-top:6px;border-top:1px solid {{ hair }}">
+<sc-for list="{{ bars }}" as="b" hint-placeholder-count="16">
+<span style="flex:1;height:{{ b.h }}%;background:{{ b.c }};border-radius:3px 3px 0 0"></span>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isScore }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:80px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:18px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<div style="display:flex;align-items:baseline;gap:16px"><span style="font-size:110px;font-weight:600;letter-spacing:-0.06em;line-height:0.86">{{ stat }}</span><span style="font-size:15px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">{{ statLabel }}</span></div>
+<h2 style="margin:0;font-size:32px;font-weight:600;letter-spacing:-0.04em;line-height:1.14;text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:15px;color:{{ body }}">{{ note }}</span>
+</sc-if>
+</div>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{ opts }}" as="o" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:9px;padding:16px 0;border-top:1px solid {{ hair }}">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:20px">
+<span style="font-size:17px;font-weight:600;letter-spacing:-0.02em;color:{{ o.color }}">{{ o.text }}</span>
+<span style="font-size:15px;font-weight:600;color:{{ o.color }}">{{ o.label }}</span>
+</div>
+<div style="height:4px;border-radius:2px;background:{{ hair }};overflow:hidden"><span style="display:block;width:{{ o.pct }}%;height:100%;background:{{ o.bar }}"></span></div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isFooter }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:40px;padding:0 120px;border-top:1px solid {{ hair }}">
+<div style="display:grid;grid-template-columns:minmax(0,1.3fr) repeat({{ groupCount }},minmax(0,1fr));gap:48px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:center;gap:12px">
+<img src="{{ mark }}" alt="Bow Tie Kreative" style="width:36px;height:36px;object-fit:contain;flex:none">
+<span style="font-size:22px;font-weight:600;letter-spacing:-0.03em">Ryan Perez</span>
+</div>
+<span style="font-size:15px;line-height:1.6;color:{{ body }};max-width:30ch">{{ headline }}</span>
+<sc-if value="{{ hasCta }}" hint-placeholder-val="{{ false }}">
+<span style="display:inline-flex;align-items:center;gap:8px;background:#3F6EE9;color:#fff;font-size:15px;font-weight:600;padding:13px 22px;border-radius:999px;align-self:flex-start;margin-top:6px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+</sc-if>
+</div>
+<sc-for list="{{ groups }}" as="g" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">{{ g.title }}</span>
+<sc-for list="{{ g.links }}" as="l" hint-placeholder-count="4">
+<span style="font-size:15px;color:{{ body }}">{{ l.t }}</span>
+</sc-for>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;gap:24px;border-top:1px solid {{ hair }};padding-top:22px">
+<span style="display:inline-flex;align-items:center;gap:9px;font-size:13px;color:{{ muted }}"><img src="{{ mark }}" alt="" style="width:17px;height:17px;object-fit:contain;opacity:0.75;flex:none">Powered by <span style="color:{{ ink }};font-weight:600">bowtiekreative.com</span></span>
+<span style="font-size:13px;color:{{ muted }}">{{ note }}</span>
+</div>
+</div>
+</sc-if>
+
+</div>
+
+<sc-if value="{{ isShelf }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:34px;padding:0 0 0 120px;overflow:hidden">
+<div style="display:flex;align-items:flex-end;gap:28px;padding-right:120px">
+<div style="display:flex;flex-direction:column;gap:12px;flex:1">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:40px;font-weight:600;letter-spacing:-0.04em;line-height:1.1;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+</div>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:14px;color:{{ muted }};padding-bottom:6px;flex:none">{{ cta2 }}</span>
+</sc-if>
+<div style="display:flex;gap:10px;flex:none;padding-bottom:2px">
+<span style="width:44px;height:44px;border-radius:50%;border:1px solid {{ hair }};display:inline-flex;align-items:center;justify-content:center;font-size:17px;color:{{ muted }}">&#8592;</span>
+<span style="width:44px;height:44px;border-radius:50%;border:1px solid {{ hair }};display:inline-flex;align-items:center;justify-content:center;font-size:17px;color:{{ ink }}">&#8594;</span>
+</div>
+</div>
+<div style="display:flex;gap:22px;align-items:stretch">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="width:318px;flex:none;display:flex;flex-direction:column;gap:14px">
+<div style="position:relative;height:184px;border-radius:16px;overflow:hidden;background:{{ surface }}">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<sc-if value="{{ it.hasMeta }}" hint-placeholder-val="{{ true }}">
+<span style="position:absolute;left:14px;bottom:14px;background:rgba(7,9,13,0.82);color:#F5F7FA;font-size:12px;font-weight:600;letter-spacing:0.04em;padding:6px 11px;border-radius:999px">{{ it.meta }}</span>
+</sc-if>
+</div>
+<span style="font-size:11.5px;letter-spacing:0.12em;text-transform:uppercase;color:{{ it.numColor }}">{{ it.body }}</span>
+<span style="font-size:18px;font-weight:600;letter-spacing:-0.028em;line-height:1.25;color:{{ it.color }};text-wrap:pretty">{{ it.title }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isFaq }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,0.72fr) minmax(0,1.28fr);gap:80px;align-items:start;padding:64px 120px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:56px;font-weight:600;letter-spacing:-0.05em;line-height:1.04;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ false }}">
+<p style="margin:0;font-size:16px;line-height:1.65;color:{{ body }};max-width:34ch">{{ sub }}</p>
+</sc-if>
+</div>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="5">
+<div style="display:flex;flex-direction:column;gap:12px;padding:22px 0;border-bottom:1px solid {{ hair }}">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:32px">
+<span style="font-size:19px;font-weight:600;letter-spacing:-0.024em;line-height:1.35;color:{{ it.color }};text-wrap:pretty">{{ it.title }}</span>
+<span style="font-size:20px;color:{{ it.numColor }};flex:none;line-height:1.2">{{ it.sign }}</span>
+</div>
+<sc-if value="{{ it.hasBody }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:15.5px;line-height:1.65;color:{{ body }};max-width:62ch">{{ it.body }}</p>
+</sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isEvent }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);gap:0;align-items:stretch;padding:0">
+<div style="position:relative;overflow:hidden">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent 55%,{{ bg }} 100%)"></div>
+<sc-if value="{{ hasBadge }}" hint-placeholder-val="{{ true }}">
+<span style="position:absolute;left:32px;top:32px;background:rgba(7,9,13,0.8);border:1px solid rgba(245,247,250,0.3);color:#F5F7FA;font-size:12px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;padding:8px 15px;border-radius:999px">{{ badge }}</span>
+</sc-if>
+</div>
+<div style="display:flex;flex-direction:column;justify-content:center;gap:22px;padding:0 96px 0 56px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:38px;font-weight:600;letter-spacing:-0.042em;line-height:1.12;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:16px;line-height:1.65;color:{{ body }};max-width:44ch">{{ sub }}</p>
+</sc-if>
+<div style="display:flex;flex-direction:column;gap:0;border-top:1px solid {{ hair }}">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<div style="display:grid;grid-template-columns:minmax(0,0.5fr) minmax(0,1fr);gap:20px;padding:11px 0;border-bottom:1px solid {{ hair }};align-items:baseline">
+<span style="font-size:11.5px;letter-spacing:0.11em;text-transform:uppercase;color:{{ muted }}">{{ it.title }}</span>
+<span style="font-size:15px;font-weight:600;letter-spacing:-0.015em;color:{{ it.color }}">{{ it.body }}</span>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;align-items:center;gap:18px;padding-top:4px">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#3F6EE9;color:#fff;font-size:15px;font-weight:600;padding:14px 24px;border-radius:999px">{{ cta }}</span>
+<sc-if value="{{ hasNote }}" hint-placeholder-val="{{ false }}">
+<span style="font-size:14px;color:{{ muted }}">{{ note }}</span>
+</sc-if>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isPromo }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,0.85fr);gap:88px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:26px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:52px;font-weight:600;letter-spacing:-0.048em;line-height:1.06;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:17px;line-height:1.7;color:{{ body }};max-width:56ch">{{ sub }}</p>
+</sc-if>
+<div style="display:flex;align-items:center;gap:18px">
+<span style="display:inline-flex;align-items:center;gap:9px;background:#3F6EE9;color:#fff;font-size:16px;font-weight:600;padding:15px 26px;border-radius:999px">{{ cta }}<span style="opacity:0.8">&#8594;</span></span>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:16px;font-weight:600;color:{{ ink }};border-bottom:1px solid {{ hair }};padding-bottom:3px">{{ cta2 }}</span>
+</sc-if>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;border-top:1px solid {{ hair }};padding-top:26px;max-width:560px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:6px">
+<span style="font-size:11.5px;letter-spacing:0.11em;text-transform:uppercase;color:{{ muted }}">{{ it.title }}</span>
+<span style="font-size:32px;font-weight:600;letter-spacing:-0.045em;line-height:1;color:{{ it.color }}">{{ it.body }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:relative;height:78%;border-radius:24px;overflow:hidden;background:{{ surface }}">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<div style="position:absolute;right:0;bottom:0;width:82px;height:82px;background:{{ bg }};border-top-left-radius:24px"></div>
+<span style="position:absolute;right:14px;bottom:14px;width:54px;height:54px;border-radius:50%;background:#3F6EE9;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:21px">&#8594;</span>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isTriptych }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:44px;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:14px;max-width:62%">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:44px;font-weight:600;letter-spacing:-0.045em;line-height:1.08;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+<sc-if value="{{ hasSub }}" hint-placeholder-val="{{ true }}">
+<p style="margin:0;font-size:16px;line-height:1.65;color:{{ body }};max-width:58ch">{{ sub }}</p>
+</sc-if>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;border-top:2px solid {{ it.railBd }}">
+<div style="display:flex;flex-direction:column;gap:6px;padding:18px 0;border-bottom:1px solid {{ hair }}">
+<span style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">Challenge</span>
+<span style="font-size:16.5px;line-height:1.4;color:{{ ink }};text-wrap:pretty">{{ it.title }}</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px;padding:18px 0;border-bottom:1px solid {{ hair }}">
+<span style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:{{ muted }}">Idea</span>
+<span style="font-size:16.5px;line-height:1.4;color:{{ body }};text-wrap:pretty">{{ it.body }}</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px;padding:18px 0">
+<span style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">Built</span>
+<span style="font-size:16.5px;font-weight:600;letter-spacing:-0.02em;line-height:1.4;color:{{ ink }};text-wrap:pretty">{{ it.meta }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isThemes }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,0.92fr);gap:80px;align-items:center;padding:0 120px">
+<div style="display:flex;flex-direction:column;gap:28px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:40px;font-weight:600;letter-spacing:-0.044em;line-height:1.08;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+</div>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="6">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:24px;padding:14px 0;border-bottom:1px solid {{ hair }}">
+<span style="font-size:26px;font-weight:600;letter-spacing:-0.034em;color:{{ it.color }}">{{ it.title }}</span>
+<span style="font-size:17px;color:{{ it.numColor }}">&#8594;</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="position:relative;height:80%;border-radius:24px;overflow:hidden;background:{{ surface }}">
+<img src="{{ image }}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(0.85) contrast(0.92)">
+<div style="position:absolute;inset:0;background:linear-gradient(0deg,rgba(7,9,13,0.62) 0%,transparent 58%)"></div>
+<sc-if value="{{ hasBadge }}" hint-placeholder-val="{{ true }}">
+<span style="position:absolute;left:26px;bottom:26px;font-size:26px;font-weight:600;letter-spacing:-0.034em;color:#F5F7FA">{{ badge }}</span>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isEpisodes }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:32px;padding:0 120px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:40px">
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-if value="{{ hasEyebrow }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#3F6EE9">{{ eyebrow }}</span>
+</sc-if>
+<h2 style="margin:0;font-size:38px;font-weight:600;letter-spacing:-0.042em;line-height:1.1;color:{{ ink }};text-wrap:pretty">{{ headline }}</h2>
+</div>
+<sc-if value="{{ hasCta2 }}" hint-placeholder-val="{{ true }}">
+<span style="font-size:14px;color:{{ muted }};padding-bottom:6px">{{ cta2 }}</span>
+</sc-if>
+</div>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<div style="display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:24px;align-items:center;padding:18px 0;border-top:1px solid {{ hair }}">
+<span style="width:46px;height:46px;border-radius:50%;border:1px solid {{ it.railBd }};display:inline-flex;align-items:center;justify-content:center;font-size:14px;color:{{ it.color }};flex:none">&#9654;</span>
+<div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+<div style="display:flex;align-items:baseline;gap:12px">
+<span style="font-size:11.5px;letter-spacing:0.11em;text-transform:uppercase;color:#3F6EE9">{{ it.body }}</span>
+<span style="font-size:12.5px;color:{{ muted }}">{{ it.meta }}</span>
+</div>
+<span style="font-size:17.5px;font-weight:600;letter-spacing:-0.024em;line-height:1.3;color:{{ it.color }};text-wrap:pretty">{{ it.title }}</span>
+</div>
+<div style="display:flex;align-items:center;gap:14px;flex:none">
+<span style="width:132px;height:3px;border-radius:999px;background:{{ hair }};position:relative;display:inline-block"><span style="position:absolute;left:0;top:0;bottom:0;width:{{ it.pct }};border-radius:999px;background:#3F6EE9"></span></span>
+<span style="font-size:12.5px;color:{{ muted }};min-width:38px">{{ it.dur }}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:640},&quot;variant&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;bar&quot;,&quot;nav&quot;,&quot;mega&quot;,&quot;hero&quot;,&quot;heroC&quot;,&quot;heroM&quot;,&quot;strip&quot;,&quot;logos&quot;,&quot;grid&quot;,&quot;split&quot;,&quot;rail&quot;,&quot;table&quot;,&quot;list&quot;,&quot;form&quot;,&quot;band&quot;,&quot;quote&quot;,&quot;gallery&quot;,&quot;pricing&quot;,&quot;dash&quot;,&quot;score&quot;,&quot;footer&quot;],&quot;default&quot;:&quot;hero&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;tone&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;h&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:640,&quot;tsType&quot;:&quot;number&quot;},&quot;eyebrow&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Keynote&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;headline&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Not inspiration. Infrastructure.&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;sub&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;cta&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Book the audit&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;cta2&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;items&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;rows&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;heads&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;fields&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;groups&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;tiers&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;opts&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;stat&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;statLabel&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;quote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;speaker&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;org&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;note&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;badge&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;cols&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;number&quot;},&quot;flip&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;false&quot;,&quot;true&quot;],&quot;default&quot;:&quot;false&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;image&quot;:{&quot;editor&quot;:null,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;h1&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:64,&quot;tsType&quot;:&quot;number&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props || {};
+    const s = v => (v === undefined || v === null) ? '' : String(v);
+    const V = s(p.variant) || 'hero';
+    const tone = s(p.tone) || 'dark';
+    const light = tone === 'light';
+    const bg = light ? '#EDEFF4' : '#07090D';
+    const ink = light ? '#10131A' : '#F5F7FA';
+    const body = light ? '#3A3F4B' : '#C5C7CE';
+    const muted = light ? 'rgba(16,19,26,0.55)' : 'rgba(245,247,250,0.55)';
+    const hair = light ? 'rgba(16,19,26,0.16)' : 'rgba(245,247,250,0.15)';
+    const surface = light ? '#FFFFFF' : '#1A1D24';
+    const accent = '#3F6EE9';
+
+    const items = s(p.items).split('|').filter(Boolean).map((raw, i) => {
+      const hot = raw.charAt(0) === '*';
+      const t = hot ? raw.slice(1) : raw;
+      const parts = t.split('/');
+      return {
+        title: parts[0] || '', body: parts[1] || '', meta: parts[2] || '', img: parts[3] || '',
+        hasBody: !!parts[1], hasMeta: !!parts[2],
+        n: String(i + 1).padStart(2, '0'), sign: hot ? '−' : '+',
+        color: hot ? accent : ink,
+        numColor: hot ? accent : muted,
+        navColor: i === 0 ? ink : muted,
+        logoColor: light ? 'rgba(16,19,26,0.5)' : 'rgba(245,247,250,0.5)',
+        dot: hot ? accent : (light ? 'rgba(16,19,26,0.3)' : 'rgba(245,247,250,0.3)'),
+        railBd: hot ? accent : hair,
+        cardBg: hot ? (light ? 'rgba(63,110,233,0.08)' : 'rgba(63,110,233,0.10)') : (light ? '#FFFFFF' : '#1A1D24'),
+        cardBd: hot ? accent : hair,
+        pct: hot ? '38%' : '0%',
+        dur: parts[2] || '',
+        sign: hot ? '\u2212' : '+'
+      };
+    });
+
+    const rows = s(p.rows).split('|').filter(Boolean).map(t => {
+      const q = t.split('/');
+      return { a: q[0] || '', b: q[1] || '', c: q[2] || '', d: q[3] || '', hasC: q.length > 2, hasD: q.length > 3 };
+    });
+    const heads = s(p.heads).split('|').filter(Boolean).map((t, i) => ({ t, color: i === s(p.heads).split('|').length - 1 ? accent : muted }));
+    const colCount = Math.max(1, heads.length || (rows[0] ? [rows[0].b, rows[0].c, rows[0].d].filter(Boolean).length : 2));
+
+    const fields = s(p.fields).split('|').filter(Boolean).map(t => {
+      const q = t.split('/');
+      return { label: q[0] || '', t: q[1] || '' };
+    });
+
+    const groups = s(p.groups).split('|').filter(Boolean).map(t => {
+      const q = t.split(':');
+      return { title: q[0] || '', links: (q[1] || '').split(',').filter(Boolean).map(x => ({ t: x })) };
+    });
+
+    const tiers = s(p.tiers).split('|').filter(Boolean).map(raw => {
+      const hot = raw.charAt(0) === '*';
+      const q = (hot ? raw.slice(1) : raw).split('/');
+      return {
+        name: q[0] || '', price: q[1] || '', unit: q[2] || '', desc: q[3] || '',
+        feats: (q[4] || '').split(',').filter(Boolean).map(x => ({ t: x })),
+        cta: q[5] || 'Choose', featured: hot,
+        cardBg: hot ? (light ? 'rgba(63,110,233,0.08)' : 'rgba(63,110,233,0.10)') : surface,
+        cardBd: hot ? accent : hair,
+        labelColor: hot ? accent : muted,
+        priceColor: ink,
+        btnBg: hot ? accent : 'transparent',
+        btnFg: hot ? '#FFFFFF' : ink,
+        btnBd: hot ? accent : hair
+      };
+    });
+
+    const opts = s(p.opts).split('|').filter(Boolean).map(raw => {
+      const hot = raw.charAt(0) === '*';
+      const q = (hot ? raw.slice(1) : raw).split(':');
+      const pct = Math.max(0, Math.min(100, Number(q[1]) || 0));
+      return { text: q[0] || '', pct, label: q[2] !== undefined ? q[2] : pct + '%',
+        color: hot ? accent : ink, bar: hot ? accent : (light ? 'rgba(16,19,26,0.35)' : 'rgba(245,247,250,0.35)') };
+    });
+
+    const seed = (s(p.headline) + V).split('').reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 9973, 11) || 11;
+    const bars = [];
+    for (let i = 0; i < 16; i++) {
+      const t = ((seed * (i + 5) * 7919) % 1000) / 1000;
+      bars.push({ h: Math.round(22 + t * 52 + i * 2), c: i === 15 ? accent : (light ? 'rgba(16,19,26,0.18)' : 'rgba(245,247,250,0.2)') });
+    }
+
+    const U = k => 'https://images.unsplash.com/photo-' + k + '?q=80&w=1600&auto=format&fit=crop';
+    const v = {
+      h: Number(p.h) || 640, bg, ink, body, muted, hair, surface,
+      barBg: light ? '#FFFFFF' : '#0B0E14',
+      items, rows, heads, colCount, fields, groups, tiers, opts, bars,
+      groupCount: Math.max(1, groups.length),
+      cols: Number(p.cols) || (items.length > 4 ? 4 : (items.length || 3)),
+      align: s(p.align) || 'flex-start',
+      rowLabel: s(p.rowLabel) || 'Criteria',
+      h1: Number(p.h1) || 64,
+      textOrder: s(p.flip) === 'true' ? 2 : 1,
+      mediaOrder: s(p.flip) === 'true' ? 1 : 2,
+      eyebrow: s(p.eyebrow), headline: s(p.headline), sub: s(p.sub),
+      cta: s(p.cta) || 'Book the audit', cta2: s(p.cta2), note: s(p.note), badge: s(p.badge),
+      stat: s(p.stat), statLabel: s(p.statLabel),
+      quote: s(p.quote), speaker: s(p.speaker) || 'Dana Whitfield', org: s(p.org) || 'Head of People, Northline',
+      image: s(p.image) || U('1519389950473-47ba0277781c'),
+      image2: s(p.image2) || U('1497366754035-f200968a6e72'),
+      mark: light ? 'brand/btk-seal.png' : 'brand/btk-seal-white.png',
+      menuBd: light ? 'rgba(16,19,26,0.28)' : 'rgba(245,247,250,0.28)',
+      isBar: V === 'bar', isNav: V === 'nav', isMega: V === 'mega',
+      isHero: V === 'hero', isHeroC: V === 'heroC', isHeroM: V === 'heroM',
+      isStrip: V === 'strip', isLogos: V === 'logos', isGrid: V === 'grid',
+      isSplit: V === 'split', isRail: V === 'rail', isTable: V === 'table',
+      isList: V === 'list', isForm: V === 'form', isBand: V === 'band',
+      isQuote: V === 'quote', isGallery: V === 'gallery', isPricing: V === 'pricing',
+      isDash: V === 'dash', isScore: V === 'score', isFooter: V === 'footer',
+      isShelf: V === 'shelf', isFaq: V === 'faq', isEvent: V === 'event',
+      isPromo: V === 'promo', isTriptych: V === 'triptych',
+      isThemes: V === 'themes', isEpisodes: V === 'episodes'
+    };
+    ['eyebrow','headline','sub','cta','cta2','note','badge','stat','statLabel'].forEach(k => {
+      v['has' + k.charAt(0).toUpperCase() + k.slice(1)] = !!v[k];
+    });
+    v.hasItems = items.length > 0;
+    v.hasFields = fields.length > 0;
+    v.hasCtaRow = !!v.cta && fields.length === 0;
+    return v;
+  }
+}
+</script>
+</body>
+</html>
