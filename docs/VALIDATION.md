@@ -13,6 +13,12 @@ installer because network authentication could not be shown in this session.
 Creating `.github/workflows/rust.yml` was also blocked as a sensitive-path write.
 No CI workflow has been installed and no green Windows/Ubuntu CI result is claimed.
 
+The complete starter, including the two original PNG brand assets, is committed
+locally. GitHub contains only the initial architecture and Site Map schema.
+Doberman rejected the image uploads as possible high-entropy secrets, then
+rejected the source tree upload as credential-like material. The feature tree
+was not published. The reference HTML and all assets are intact locally.
+
 Run the four commands in the root README after installing Rust. The core tests
 cover scan results, framework detection, save/review/commit/undo, stale drafts,
 dirty repositories, credential patterns, failed-commit rollback, demo overwrite
