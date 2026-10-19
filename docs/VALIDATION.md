@@ -1,29 +1,35 @@
 # Validation status
 
-Passed static checks: Cargo manifests parse as TOML, the Site Map schema parses
-as JSON, and every bundled original handoff file is byte-identical to its input.
-A credential-prefix scan matched only the detector implementation and synthetic
-test inputs. No `.env` file is included. Git whitespace checks passed for all
-staged source. Rust formatting still needs rustfmt.
+Verified on Ryan's Linux workstation on 2026-10-18 with Rust 1.99.1.
+The prior installation and execution blocker has been removed.
 
-Rust compilation, formatting, linting and tests are pending. Rust was not
-installed on the build computer, and Doberman blocked downloading its official
-installer because network authentication could not be shown in this session.
+- `cargo fmt --all -- --check`: passed.
+- `cargo test --workspace --all-features --locked`: 8 core workflow tests and
+  1 desktop rendering test passed.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`:
+  passed.
+- `cargo build --workspace --all-features --locked`: passed.
+- The compiled CLI created a disposable Git-backed demo and scanned its two
+  pages, missing descriptions and broken Blog link correctly.
+- The compiled native desktop application launched successfully and produced a
+  built-in validation screenshot. The screenshot covers startup; the headless
+  desktop test draws all six views.
+- Original handoff assets remain unchanged. The catalog contains 118 entries in
+  12 families; this count is checked against the bundled source.
 
-Creating `.github/workflows/rust.yml` was also blocked as a sensitive-path write.
-No CI workflow has been installed and no green Windows/Ubuntu CI result is claimed.
+Core tests exercise scanning, framework detection, source review, save, local
+commit, undo, stale drafts, dirty repositories, credential patterns, failed-commit
+rollback, demo overwrite protection and symlink boundaries. The rollback test
+uses an empty Git author name: Git permits an empty email address.
 
-The complete starter, including the two original PNG brand assets, is committed
-locally. GitHub contains only the initial architecture and Site Map schema.
-Doberman rejected the image uploads as possible high-entropy secrets, then
-rejected the source tree upload as credential-like material. The feature tree
-was not published. The reference HTML and all assets are intact locally.
+The optional desktop feature `validation-screenshot` enables eframe's built-in
+`EFRAME_SCREENSHOT_TO` capture. It is disabled in normal builds. Local toolchain,
+demo and screenshot outputs live under ignored `data/`.
 
-Run the four commands in the root README after installing Rust. The core tests
-cover scan results, framework detection, save/review/commit/undo, stale drafts,
-dirty repositories, credential patterns, failed-commit rollback, demo overwrite
-protection, symlink boundaries and the original catalog. These are authored tests,
-not passed test results. The desktop test draws each empty view without a window.
+GitHub Actions checks Ubuntu and Windows on pushes and pull requests. Remote CI
+results are separate from the Linux results above. Windows interactive behavior
+and screen-reader accessibility still need platform testing.
 
-This starter has not passed the full production brief's Astro acceptance flow.
-AI helpers, deployment and live rollback remain unimplemented roadmap items.
+This is a runnable starter. It has not passed the full production brief's Astro
+acceptance flow. Structured page adapters, AI helpers, deployment and live rollback
+remain roadmap items.

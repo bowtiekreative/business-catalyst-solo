@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+validation-screenshot = ["eframe/__screenshot"]
+
 [dependencies]
 catalyst-core.workspace = true
 serde_json.workspace = true

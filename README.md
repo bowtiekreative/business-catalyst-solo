@@ -47,7 +47,7 @@ cargo run -p catalyst-cli -- history ../catalyst-demo
 ## Included
 
 - Native egui/eframe window: Overview, Pages, Source editor, History, Activity,
-  and the 128-pattern LAKA catalog.
+  and the original LAKA catalog (118 entries across 12 families).
 - Source scanner for static HTML, literal Astro pages and conventional Next.js
   routes. WordPress theme detection; PHP editing needs a later adapter.
 - Reviewed source changes, stale-draft checks, local Git commits, private

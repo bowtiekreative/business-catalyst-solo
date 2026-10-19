@@ -5,8 +5,14 @@ pub fn create_demo(path: impl AsRef<Path>) -> Result<Project> {
     // create_dir deliberately refuses to overwrite an existing folder.
     fs::create_dir(path.as_ref())?;
     for (name, content) in [
-        ("index.html", include_str!("../../../fixtures/static/index.html")),
-        ("about.html", include_str!("../../../fixtures/static/about.html")),
+        (
+            "index.html",
+            include_str!("../../../fixtures/static/index.html"),
+        ),
+        (
+            "about.html",
+            include_str!("../../../fixtures/static/about.html"),
+        ),
         (".gitignore", ".catalyst/private/\n.env\n.env.*\n"),
     ] {
         check_secrets(content)?;
