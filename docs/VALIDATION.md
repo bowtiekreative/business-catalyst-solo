@@ -495,3 +495,62 @@ frame cue difference without relaxing the actual decoder frame-count bound.
   a newer draft made during export remained intact/dirty and the generated
   source bytes were unchanged. This used the committed generated-text fixture,
   local Qwen and a temporary project; no physical device or private recording.
+
+
+## Native preview controls and YouTube integration · 2026-10-20
+
+The native player now uses system mpv with an always-visible controller. Real
+mouse input on a generated MP4 verified Play/Pause, a stopped clock while paused,
+fullscreen enter/exit, Escape, staying open at EOF and Play restarting the clip.
+A compiled-in local Lua handler fixes replay after EOF. User configs/scripts,
+network extraction and sidecar discovery remain disabled. Source bytes stayed
+unchanged. No physical camera or microphone was opened by these checks.
+
+The app queues camera stop and take saving before Preview/Export, with visible
+status and cancellation. Actual egui pointer capture/preview and output/cache/
+cancel/newer-draft integration tests both passed with mpv in27.20seconds.
+
+The generated capture clock benchmark under another1080p encode measured109ms
+median/132ms p95 across24samples from filter clock to latest native RGBA. This
+excludes sensor/USB/driver and GPU painting. Camera video queues are2packets and
+Pulse audio is8packets; final capture remains1920×1080 at30fps. Physical C920/
+OBSBOT sensor-to-screen latency and ten-minute A/V drift remain unverified.
+
+Project → YouTube integrates the worker protocol, native connection/upload/import
+forms and existing append/autosave path. Credentials stay in the OS keychain;
+opening the panel performs no credential access. Review gates bind the chosen
+connection, metadata and rendered MP4. Google setup/consent and real publishing
+remain user acceptance; no live account or private keychain was accessed.
+
+Final locked offline workspace checks passed123tests (83video core,23studio,
+8shared local,8existing workflow,1Catalyst UI),22opt-in checks ignored. All-target/
+all-feature Clippy with warnings denied passed. Seven YouTube-panel fixtures cover
+idle startup, review, real pointer confirmation, stale results, newer drafts,
+worker failure and late cancellation. The modal pointer fixture first settles
+egui layout before reading its accessibility bounds. Formatting and isolated
+package-installer self-checks passed. See docs/YOUTUBE.md for protocol evidence.
+
+Release compilation and installation of 0.1.1 are tracked separately below. No
+Windows/macOS runtime, fresh-OS install, real Google upload or hardware timing
+acceptance is inferred from these checks.
+
+The host system yt-dlp2024.04.09 rejects two required isolation flags. Packaging
+now bundles the pinned official2026.08.19 zip executable, verified against its
+release SHA256 before execution, with unmodified LICENSE and THIRD_PARTY_LICENSES.
+The tool passed help/version checks with plugin and remote-component loading
+disabled. A confined app-prefix resolver prefers that bundle and rejects linked,
+hardlinked, empty or non-executable existing tools. Two new local resolver
+fixtures passed; all19YouTube tests passed after this change (two generated
+integrations stayed opt-in). Full123-test workspace results above predate only
+this resolver addition; final all-target/all-feature strict Clippy passed again.
+Installer fixtures now also check bundled tools, their manifest hash, unmanaged
+tool preservation and linked parent-directory refusal. No public clip was fetched.
+
+Native0.1.1 was rebuilt without validation/capture-test features, packaged as
+`storyfold-record_0.1.1~preview.2_amd64.deb`, extracted and started under Xvfb
+for8seconds without stderr or missing libraries. Binary SHA256:
+`2553b85a3a3bc578d8fdba8c487e122fad0d25e2fb41e7735a21b7913eb11884`.
+User installation, manifest hashes and launcher validation passed. The installed
+app was launched with version0.1.1in its title; older windows were left intact.
+The bundled tool passed its restrictive help/version checks. Fresh-OS install,
+physical timing, Windows/macOS and real Google/keychain acceptance remain open.

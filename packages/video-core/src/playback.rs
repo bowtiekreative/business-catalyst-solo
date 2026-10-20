@@ -1,46 +1,72 @@
-//! Explicit playback of a prepared local sequence. Reuse the system's FFmpeg
-//! player for audio, seeking and fullscreen instead of another decoder stack.
+//! Prepared local sequences with mpv's visible native playback controller.
 use crate::{ProjectStore, Result, media};
 use catalyst_core::local::{self, FileMode, PathPolicy};
-use std::process::{Child, Command, Stdio};
+use std::{
+    io::Write,
+    process::{Child, Command, Stdio},
+};
+#[cfg(all(test, unix, feature = "capture-test"))]
+#[path = "playback/native_tests.rs"]
+mod native_tests;
 
 pub struct SequencePlayer {
     child: Child,
+    _controls: tempfile::NamedTempFile,
 }
 impl SequencePlayer {
     /// Call from a worker. The only accepted input is an existing confined MP4
     /// under this project's exports directory, never an arbitrary path or URL.
     pub fn start(store: &ProjectStore, relative: &str, muted: bool) -> Result<Self> {
         let path = export_path(store, relative)?;
-        let mut command = Command::new(media::tool("ffplay")?);
-        command.args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-autoexit",
-            "-window_title",
-            "Storyfold · Sequence preview",
-            "-x",
-            "960",
-            "-y",
-            "540",
-            "-seek_interval",
-            "1",
-            "-protocol_whitelist",
-            "file",
-            "-f",
-            "mov",
-        ]);
-        if muted {
-            command.arg("-an");
-        }
-        let child=command.arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|_|"The native sequence player could not start. Install system FFmpeg with ffplay.")?;
-        Ok(Self { child })
+        let (mut command, controls) = player_command(store, muted)?;
+        let child = command
+            .arg("--")
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(
+                |_| "The native sequence player could not start. Install the system mpv player.",
+            )?;
+        Ok(Self {
+            child,
+            _controls: controls,
+        })
     }
     /// Nonblocking status; Some(false) is surfaced as a playback failure.
     pub fn finished(&mut self) -> Result<Option<bool>> {
         Ok(self.child.try_wait()?.map(|status| status.success()))
     }
+}
+fn player_command(store: &ProjectStore, muted: bool) -> Result<(Command, tempfile::NamedTempFile)> {
+    let mut command = Command::new(media::tool("mpv").map_err(
+        |_| "Install system mpv to preview sequences with Play/Pause and fullscreen controls",
+    )?);
+    command.args([
+        "--no-config", "--load-scripts=no", "--ytdl=no", "--terminal=no",
+        "--sub-auto=no", "--audio-file-auto=no", "--cover-art-auto=no",
+        "--save-position-on-quit=no", "--keep-open=yes", "--keep-open-pause=no", "--force-window=yes",
+        "--title=Storyfold · Sequence preview", "--autofit=960x640",
+        "--osc=yes", "--script-opts=osc-visibility=always,osc-layout=bottombar,osc-fadeduration=0,osc-boxvideo=yes",
+        "--demuxer=lavf", "--demuxer-lavf-format=mov", "--demuxer-lavf-o=protocol_whitelist=file",
+    ]);
+    // This compiled-in replay handler is the only script loaded. User configs,
+    // arbitrary scripts, extractors and sidecar files remain disabled.
+    let private = local::private_dir(store.root(), local::PrivateNamespace::Sidebar, true)?;
+    let mut controls = tempfile::Builder::new()
+        .prefix("preview-")
+        .suffix(".lua")
+        .tempfile_in(private)?;
+    controls.write_all(include_bytes!("playback/replay-end.lua"))?;
+    controls.flush()?;
+    let mut script = std::ffi::OsString::from("--script=");
+    script.push(controls.path());
+    command.arg(script);
+    if muted {
+        command.arg("--audio=no");
+    }
+    Ok((command, controls))
 }
 impl Drop for SequencePlayer {
     fn drop(&mut self) {

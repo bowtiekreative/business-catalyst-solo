@@ -181,7 +181,7 @@ fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
     }
     Ok(ips)
 }
-pub(super) struct PublicProxy {
+pub(crate) struct PublicProxy {
     address: SocketAddr,
     stop: Arc<AtomicBool>,
 }
@@ -190,6 +190,14 @@ impl PublicProxy {
         self.address
     }
     pub fn start() -> Result<Self> {
+        Self::start_with_limits(Duration::from_secs(35), 64 * 1024 * 1024, 128)
+    }
+    pub fn start_with_limits(
+        timeout: Duration,
+        max_bytes: u64,
+        max_connections: u32,
+    ) -> Result<Self> {
+        let limits = ProxyLimits::new(timeout, max_bytes, max_connections)?;
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
@@ -201,12 +209,11 @@ impl PublicProxy {
             .spawn(move || {
                 let started = Instant::now();
                 let mut accepted = 0;
-                while !token.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(35)
-                {
+                while !token.load(Ordering::Relaxed) && started.elapsed() < limits.timeout {
                     match listener.accept() {
                         Ok((stream, _)) => {
                             accepted += 1;
-                            if accepted > 128 {
+                            if accepted > limits.connections {
                                 drop(stream);
                                 continue;
                             }
@@ -215,7 +222,7 @@ impl PublicProxy {
                             let _ = thread::Builder::new()
                                 .name("storyfold-public-tunnel".into())
                                 .spawn(move || {
-                                    let _ = tunnel(stream, stop, bytes, started);
+                                    let _ = tunnel(stream, stop, bytes, started, limits);
                                 });
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -228,6 +235,38 @@ impl PublicProxy {
         Ok(Self { address, stop })
     }
 }
+#[derive(Clone, Copy)]
+struct ProxyLimits {
+    timeout: Duration,
+    bytes: u64,
+    connections: u32,
+}
+impl ProxyLimits {
+    fn new(timeout: Duration, bytes: u64, connections: u32) -> Result<Self> {
+        if timeout.is_zero()
+            || timeout > Duration::from_secs(1800)
+            || bytes == 0
+            || bytes > 4 * 1024 * 1024 * 1024
+            || connections == 0
+            || connections > 512
+        {
+            return Err("Public transfer limits are outside the supported bounds".into());
+        }
+        Ok(Self {
+            timeout,
+            bytes,
+            connections,
+        })
+    }
+}
+#[allow(deprecated)] // fetch_update remains available on the declared Rust1.88 minimum.
+fn reserve_bytes(total: &AtomicU64, amount: u64, limit: u64) -> bool {
+    total
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+            old.checked_add(amount).filter(|next| *next <= limit)
+        })
+        .is_ok()
+}
 impl Drop for PublicProxy {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -238,6 +277,7 @@ fn tunnel(
     stop: Arc<AtomicBool>,
     bytes: Arc<AtomicU64>,
     started: Instant,
+    limits: ProxyLimits,
 ) -> Result<()> {
     client.set_read_timeout(Some(Duration::from_secs(2)))?;
     client.set_write_timeout(Some(Duration::from_secs(2)))?;
@@ -285,8 +325,9 @@ fn tunnel(
     let downstream = remote.try_clone()?;
     let up_stop = stop.clone();
     let up_bytes = bytes.clone();
-    let worker = thread::spawn(move || relay(upstream, remote, &up_stop, &up_bytes, started));
-    relay(downstream, client, &stop, &bytes, started);
+    let worker =
+        thread::spawn(move || relay(upstream, remote, &up_stop, &up_bytes, started, limits));
+    relay(downstream, client, &stop, &bytes, started, limits);
     let _ = worker.join();
     Ok(())
 }
@@ -296,13 +337,14 @@ fn relay(
     stop: &AtomicBool,
     total: &AtomicU64,
     started: Instant,
+    limits: ProxyLimits,
 ) {
     let mut buffer = [0_u8; 16384];
-    while !stop.load(Ordering::Relaxed) && started.elapsed() < Duration::from_secs(35) {
+    while !stop.load(Ordering::Relaxed) && started.elapsed() < limits.timeout {
         match from.read(&mut buffer) {
             Ok(0) => break,
             Ok(n) => {
-                if total.fetch_add(n as u64, Ordering::Relaxed) > 64 * 1024 * 1024
+                if !reserve_bytes(total, n as u64, limits.bytes)
                     || to.write_all(&buffer[..n]).is_err()
                 {
                     break;
@@ -322,6 +364,21 @@ fn relay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transfer_limits_are_bounded_and_shared_bytes_never_overshoot() {
+        assert!(ProxyLimits::new(Duration::ZERO, 1, 1).is_err());
+        assert!(ProxyLimits::new(Duration::from_secs(1801), 1, 1).is_err());
+        assert!(ProxyLimits::new(Duration::from_secs(30), 0, 1).is_err());
+        assert!(ProxyLimits::new(Duration::from_secs(30), u64::MAX, 1).is_err());
+        assert!(ProxyLimits::new(Duration::from_secs(30), 1, 513).is_err());
+        let total = AtomicU64::new(0);
+        assert!(reserve_bytes(&total, 6, 10));
+        assert!(!reserve_bytes(&total, 5, 10));
+        assert_eq!(total.load(Ordering::Relaxed), 6);
+        assert!(reserve_bytes(&total, 4, 10));
+        assert!(!reserve_bytes(&total, u64::MAX, 10));
+        assert_eq!(total.load(Ordering::Relaxed), 10);
+    }
     #[test]
     fn private_addresses_and_non_https_never_reach_dns_or_browser() {
         for u in [

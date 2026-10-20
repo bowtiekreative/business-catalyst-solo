@@ -159,11 +159,37 @@ mod tests {
         paint(&mut app, &ctx, pointer(pos, false));
         wait(&mut app, &ctx, 220);
         paint(&mut app, &ctx, space(false));
-        until(&mut app, &ctx, |a| a.project.studio().clips().len() == 3);
-        app.capture.stop();
         until(&mut app, &ctx, |a| {
-            a.capture.can_leave() && !a.project.busy() && !a.project.dirty()
+            a.project.studio().clips().len() == 3 && !a.project.busy()
         });
+        // The real Preview button must also work while the session camera is on.
+        app.output.muted = true;
+        let bounds = paint(&mut app, &ctx, vec![])
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, node)| {
+                (node.label() == Some("Stop camera & preview")).then(|| node.bounds().unwrap())
+            })
+            .unwrap();
+        let preview = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.) as f32,
+            ((bounds.y0 + bounds.y1) / 2.) as f32,
+        );
+        paint(&mut app, &ctx, pointer(preview, true));
+        paint(&mut app, &ctx, pointer(preview, false));
+        assert!(
+            app.output.busy(),
+            "Preview click should visibly queue camera stop and preparation"
+        );
+        until(&mut app, &ctx, |a| {
+            a.capture.can_leave() && !a.project.busy() && !a.project.dirty() && !a.output.busy()
+        });
+        assert!(app.output.error.is_none(), "{:?}", app.output.error);
+        assert!(app.output.status.contains("preview opened"));
+        app.output.stop_preview();
         assert!(app.capture.texture.is_none());
         let studio = app.project.studio().clone();
         let folder = app.project.folder.clone().unwrap();
@@ -207,6 +233,9 @@ pub struct CaptureUi {
     autosave: bool,
 }
 impl CaptureUi {
+    pub fn queue_import(&mut self, media: ImportedMedia) {
+        self.append.push_back(Append::Import(media));
+    }
     pub fn preview_frame(&self) -> Option<std::sync::Arc<video_core::capture::PreviewFrame>> {
         self.session.as_ref().and_then(|s| s.latest_preview())
     }

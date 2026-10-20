@@ -8,6 +8,7 @@ mod overlays;
 use output::{Action, OutputUi};
 use overlays::OverlaysUi;
 mod workspace;
+mod youtube;
 use capture::CaptureUi;
 use video_core::{ClipId, Direction, Edit, EditOutcome, Nudge, Orientation, TrimEdge};
 use workspace::Workspace;
@@ -127,6 +128,7 @@ struct TrimDraft {
 #[derive(Default)]
 struct SidebarVideo {
     ai: ai::AiUi,
+    youtube: youtube::YoutubeUi,
     project: Workspace,
     capture: CaptureUi,
     cards: OverlaysUi,
@@ -161,7 +163,10 @@ impl SidebarVideo {
             .is_some()
     }
     fn request(&mut self, intent: Intent, ctx: &egui::Context) {
-        if self.ai.open || self.ai.busy() {
+        if self.youtube.open || self.youtube.busy() {
+            self.project.status =
+                "Finish or close YouTube before replacing the project or closing.".into();
+        } else if self.ai.open || self.ai.busy() {
             self.project.status =
                 "Finish or close the AI review before replacing the project or closing.".into();
         } else if self.cards.editing() {
@@ -169,7 +174,7 @@ impl SidebarVideo {
                 Some("Approve or cancel this card before replacing the project or closing.".into());
         } else if !self.capture.can_leave() || self.cards.busy() {
             self.capture.error = Some("Stop the camera and wait for takes and media operations to finish before opening another project or closing.".into());
-        } else if self.project.busy() {
+        } else if self.project.busy() || self.output.busy() {
             self.project.status = "Wait for the current project operation to finish.".into();
         } else if self.dirty() {
             self.confirm = Some(intent);
@@ -256,6 +261,19 @@ impl SidebarVideo {
                             }
                             if ui.button("Open project…").clicked() {
                                 intent = Some(Intent::Open);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(
+                                    !self.output.busy()
+                                        && !self.ai.open
+                                        && !self.cards.busy()
+                                        && !self.cards.editing(),
+                                    egui::Button::new("YouTube…"),
+                                )
+                                .clicked()
+                            {
+                                self.youtube.show_window();
                                 ui.close();
                             }
                             if ui
@@ -474,32 +492,36 @@ impl SidebarVideo {
         });
     }
     fn output_button(&mut self, ui: &mut egui::Ui, action: Action) {
-        let label = if matches!(action, Action::Preview) {
-            "Preview sequence"
-        } else {
-            "Export MP4"
+        let label = match (action, self.capture.camera_running()) {
+            (Action::Preview, true) => "Stop camera & preview",
+            (Action::Export, true) => "Stop camera & export",
+            (Action::Preview, false) => "Preview sequence",
+            (Action::Export, false) => "Export MP4",
         };
         if ui
             .add_enabled(
                 !self.project.busy()
+                    && !self.output.busy()
                     && !self.cards.busy()
                     && !self.ai.open
                     && !self.ai.busy()
+                    && !self.youtube.open
+                    && !self.youtube.busy()
                     && !self.cards.editing()
-                    && self.capture.can_leave()
-                    && !self.project.studio().clips().is_empty(),
+                    && self.project.store().is_some()
+                    && (!self.project.studio().clips().is_empty() || self.capture.taking()),
                 egui::Button::new(label).min_size(egui::vec2(44., 44.)),
             )
             .on_disabled_hover_text(
-                "Save a project, add clips and stop the camera before preparing the sequence.",
+                "Create a project and record or import a clip before preparing the sequence.",
             )
             .clicked()
             && self.flush_name()
         {
-            self.output.request(
+            self.output.request_from_button(
                 action,
                 &mut self.project,
-                &self.capture,
+                &mut self.capture,
                 ui.ctx(),
                 self.cards.reduced_motion,
             );
@@ -925,6 +947,7 @@ impl SidebarVideo {
             || self.trim.is_some()
             || self.version_summary.is_some()
             || self.project.loading()
+            || self.youtube.open
             || self.cards.editing()
             || self.capture.show_settings
             || !self.capture.recoveries.is_empty()
@@ -965,6 +988,7 @@ impl SidebarVideo {
     fn show(&mut self, ctx: &egui::Context) {
         if self.project.poll(ctx) {
             self.output.reset();
+            self.youtube.project_changed();
             self.name_draft = self.project.studio().name().into();
             self.selected = None;
             self.playhead_ms = 0;
@@ -972,11 +996,14 @@ impl SidebarVideo {
         }
         self.output
             .poll(&mut self.project, ctx, self.cards.reduced_motion);
+        self.youtube.poll(&mut self.project, &mut self.capture, ctx);
         if let Some(clip) = self.capture.poll(&mut self.project, ctx) {
             self.select(clip);
         }
+        self.output
+            .after_capture(&mut self.project, &mut self.capture, ctx);
         self.ai.poll(&mut self.project, ctx);
-        if !self.ai.open {
+        if !self.ai.open && !self.youtube.open {
             self.shortcuts(ctx);
         }
         self.cards
@@ -1023,6 +1050,7 @@ impl SidebarVideo {
         if let Some((slot, content)) = self.ai.dialog(&mut self.project, ctx) {
             self.cards.edit(slot, Some(content));
         }
+        self.youtube.dialog(&mut self.project, &self.capture, ctx);
     }
 }
 fn timecode(ms: u64) -> String {
@@ -1051,11 +1079,14 @@ impl eframe::App for SidebarVideo {
             && !self.allow_close
             && (self.dirty()
                 || self.project.busy()
+                || self.output.busy()
                 || !self.capture.can_leave()
                 || self.cards.busy()
                 || self.cards.editing()
                 || self.ai.open
-                || self.ai.busy())
+                || self.ai.busy()
+                || self.youtube.open
+                || self.youtube.busy())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request(Intent::Close, ctx);
@@ -1085,8 +1116,13 @@ fn main() -> eframe::Result {
     if std::env::var_os("SIDEBAR_VIDEO_VALIDATION_TIMELINE").is_some() {
         validation_timeline(&mut app);
     }
+    #[cfg(feature = "validation-screenshot")]
+    if std::env::var_os("SIDEBAR_VIDEO_VALIDATION_YOUTUBE").is_some() {
+        app.youtube.show_window();
+    }
+    let title = format!("Storyfold · Record studio ({})", env!("CARGO_PKG_VERSION"));
     eframe::run_native(
-        "Storyfold · Record studio",
+        &title,
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_app_id("storyfold-record")
@@ -1230,6 +1266,13 @@ mod tests {
         assert!(matches!(app.confirm, Some(Intent::Open)));
         assert!(!app.project.busy());
         assert_eq!(app.name_draft, "Uncommitted title");
+        app.confirm = None;
+        app.youtube.show_window();
+        app.request(Intent::Open, &ctx);
+        assert!(app.confirm.is_none());
+        assert!(!app.project.busy());
+        assert_eq!(app.name_draft, "Uncommitted title");
+        assert!(app.project.status.contains("close YouTube"));
     }
     #[test]
     fn design_text_colors_meet_contrast_on_their_actual_surfaces() {

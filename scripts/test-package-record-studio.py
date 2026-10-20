@@ -36,11 +36,36 @@ with tempfile.TemporaryDirectory(prefix='storyfold install test ') as temporary:
             raise AssertionError('Unmanaged executable was overwritten')
         except ValueError:
             pass
+        installed.write_bytes(binary.read_bytes())
+        downloader = root / 'yt-dlp'
+        downloader.write_bytes(b'generated downloader fixture')
+        for name in packager.DOWNLOADER_NOTICES:
+            (root / name).write_text('Generated notice fixture')
+        packager.install(binary, downloader)
+        tool = home / '.local/share/storyfold-record/tools/yt-dlp'
+        assert tool.read_bytes() == downloader.read_bytes()
+        assert tool.stat().st_mode & 0o777 == 0o755
+        manifest = json.loads((home / '.local/share/storyfold-record/install.json').read_text())
+        assert manifest['yt_dlp_sha256'] == hashlib.sha256(downloader.read_bytes()).hexdigest()
+        packager.install(binary, downloader)
+        tool.write_bytes(b'Unmanaged changed downloader')
+        try:
+            packager.install(binary, downloader)
+            raise AssertionError('Unmanaged downloader was overwritten')
+        except ValueError:
+            pass
     linked = root / 'linked'
     linked.symlink_to(binary)
     try:
         packager.copy(binary, linked)
         raise AssertionError('Linked destination was overwritten')
+    except ValueError:
+        pass
+    linked_folder = root / 'linked-folder'
+    linked_folder.symlink_to(root, target_is_directory=True)
+    try:
+        packager.copy(binary, linked_folder / 'unexpected-copy')
+        raise AssertionError('Linked destination folder was followed')
     except ValueError:
         pass
     assert binary.read_bytes() == b'generated executable fixture'

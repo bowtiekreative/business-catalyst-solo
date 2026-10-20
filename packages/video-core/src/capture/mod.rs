@@ -7,6 +7,8 @@ mod devices;
 mod engine;
 #[cfg(target_os = "linux")]
 mod gesture;
+#[cfg(all(test, target_os = "linux", feature = "capture-test"))]
+mod latency_tests;
 #[cfg(not(target_os = "linux"))]
 mod unsupported;
 

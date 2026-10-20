@@ -34,6 +34,7 @@ struct Pending {
 }
 #[derive(Default)]
 pub struct OutputUi {
+    waiting_for_camera: Option<(Action, bool)>,
     pending: Option<Pending>,
     player_pending: Option<mpsc::Receiver<Result<SequencePlayer, String>>>,
     folder_pending: Option<mpsc::Receiver<Result<(), String>>>,
@@ -47,7 +48,47 @@ pub struct OutputUi {
 }
 impl OutputUi {
     pub fn busy(&self) -> bool {
-        self.pending.is_some() || self.player_pending.is_some()
+        self.waiting_for_camera.is_some() || self.pending.is_some() || self.player_pending.is_some()
+    }
+    pub fn request_from_button(
+        &mut self,
+        action: Action,
+        project: &mut Workspace,
+        capture: &mut CaptureUi,
+        ctx: &egui::Context,
+        reduced_motion: bool,
+    ) {
+        if self.busy() || project.busy() {
+            return;
+        }
+        if capture.can_leave() {
+            self.request(action, project, capture, ctx, reduced_motion);
+        } else {
+            self.stop_preview();
+            self.error = None;
+            self.progress = None;
+            self.status =
+                "Stopping the camera and saving your take before preparing the sequence…".into();
+            self.waiting_for_camera = Some((action, reduced_motion));
+            capture.stop();
+            ctx.request_repaint();
+        }
+    }
+    /// Capture autosaves must finish before the export takes its immutable snapshot.
+    pub fn after_capture(
+        &mut self,
+        project: &mut Workspace,
+        capture: &mut CaptureUi,
+        ctx: &egui::Context,
+    ) {
+        if self.waiting_for_camera.is_some() && capture.camera_running() {
+            // Also catches a camera-start request that completed after the click.
+            capture.stop();
+        }
+        if self.waiting_for_camera.is_some() && capture.can_leave() && !project.busy() {
+            let (action, reduced_motion) = self.waiting_for_camera.take().unwrap();
+            self.request(action, project, capture, ctx, reduced_motion);
+        }
     }
     pub fn request(
         &mut self,
@@ -181,6 +222,7 @@ impl OutputUi {
         }
     }
     pub fn reset(&mut self) {
+        self.waiting_for_camera = None;
         self.stop_preview();
         self.cached = None;
         self.status.clear();
@@ -266,7 +308,7 @@ impl OutputUi {
             match player {
                 Ok(player) => {
                     self.player = Some(player);
-                    self.status="Sequence preview opened. Space pauses · arrows seek · F expands · Escape closes.".into();
+                    self.status="Sequence preview opened. Use the visible Play/Pause, seek bar and fullscreen controls. The preview stays open at the end.".into();
                 }
                 Err(e) => {
                     self.error = Some(e);
@@ -353,6 +395,10 @@ impl OutputUi {
                         );
                     }
                     ui.label(&self.status);
+                    if self.waiting_for_camera.is_some() && ui.button("Cancel preparation").clicked() {
+                        self.waiting_for_camera = None;
+                        self.status = "Sequence preparation cancelled. Any finishing takes remain in your project.".into();
+                    }
                     if self.pending.is_some() {
                         if let Some(progress) = &self.progress {
                             ui.label(&progress.message);

@@ -428,6 +428,184 @@ pub fn hardened_git(root: &Path, args: &[&str]) -> Result<Output> {
         .output()?)
 }
 
+/// Normal per-user application state, created only on an explicit operation.
+/// No credentials belong here. Advisory locks coordinate normal app processes;
+/// they do not defend against malicious code already running as the same user.
+pub fn user_state_directory(app: &str) -> Result<PathBuf> {
+    validate_relative_path(app)?;
+    if app.contains('/') || app.len() > 64 {
+        return Err("Use one normal application state namespace".into());
+    }
+    #[cfg(target_os = "windows")]
+    let base = PathBuf::from(
+        std::env::var_os("LOCALAPPDATA").ok_or("Per-user local application data is unavailable")?,
+    );
+    #[cfg(target_os = "macos")]
+    let base = PathBuf::from(std::env::var_os("HOME").ok_or("Per-user home is unavailable")?)
+        .join("Library")
+        .join("Application Support");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let base = match std::env::var_os("XDG_STATE_HOME") {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => PathBuf::from(std::env::var_os("HOME").ok_or("Per-user home is unavailable")?)
+            .join(".local")
+            .join("state"),
+    };
+    #[cfg(not(any(unix, target_os = "windows")))]
+    return Err("Secure per-user state is unavailable on this platform".into());
+    #[cfg(any(unix, target_os = "windows"))]
+    {
+        secure_state_tree(&base)?;
+        state_owner(&base)?;
+        let dir = base.join(app);
+        secure_state_tree(&dir)?;
+        state_owner(&dir)?;
+        Ok(dir)
+    }
+}
+fn secure_state_tree(path: &Path) -> Result<()> {
+    if !path.is_absolute() {
+        return Err("Application state must use an absolute per-user path".into());
+    }
+    let mut parent = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::Prefix(_) | Component::RootDir => {
+                parent.push(part);
+                continue;
+            }
+            Component::Normal(_) => parent.push(part),
+            _ => return Err("Application state path contains traversal".into()),
+        }
+        match fs::symlink_metadata(&parent) {
+            Ok(meta) => {
+                if !meta.is_dir() || meta.file_type().is_symlink() {
+                    return Err("Application state folders cannot be links".into());
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    if meta.file_attributes() & 0x400 != 0 {
+                        return Err("Application state cannot use reparse-point folders".into());
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Require the normal existing parent before each new directory.
+                let owner = parent.parent().ok_or("Missing state parent")?;
+                state_owner(owner)?;
+                let mut builder = fs::DirBuilder::new();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::DirBuilderExt;
+                    builder.mode(0o700);
+                }
+                builder.create(&parent)?;
+                state_owner(&parent)?;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+#[cfg(unix)]
+fn state_owner(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path)?;
+    // SAFETY: geteuid is a side-effect-free OS query with no pointer arguments.
+    if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o022 != 0 {
+        return Err(
+            "Application state must be owned by the current user without group/world write access"
+                .into(),
+        );
+    }
+    Ok(())
+}
+#[cfg(windows)]
+fn state_owner(path: &Path) -> Result<()> {
+    use std::{os::windows::ffi::OsStrExt, ptr};
+    use winapi::{
+        shared::winerror::ERROR_SUCCESS,
+        um::{
+            accctrl::SE_FILE_OBJECT,
+            aclapi::GetNamedSecurityInfoW,
+            handleapi::CloseHandle,
+            processthreadsapi::{GetCurrentProcess, OpenProcessToken},
+            securitybaseapi::{EqualSid, GetTokenInformation},
+            winbase::LocalFree,
+            winnt::{OWNER_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser},
+        },
+    };
+    let mut wide: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut owner = ptr::null_mut();
+    let mut descriptor = ptr::null_mut();
+    // SAFETY: live UTF-16 filename and output pointers match Win32 API types.
+    let code = unsafe {
+        GetNamedSecurityInfoW(
+            wide.as_mut_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if code != ERROR_SUCCESS {
+        return Err("Could not verify application state ownership".into());
+    }
+    let result = (|| {
+        let mut token = ptr::null_mut();
+        // SAFETY: output token handle is initialized only on successful return.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err("Could not verify the current user for application state".into());
+        }
+        let checked = (|| {
+            let mut length = 0;
+            // SAFETY: null buffer queries the required token-information length.
+            unsafe {
+                GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut length);
+            }
+            if length == 0 || length > 65536 {
+                return Err("Invalid current-user token size".into());
+            }
+            // usize alignment also satisfies TOKEN_USER/SID pointer alignment.
+            let mut storage =
+                vec![0_usize; (length as usize).div_ceil(std::mem::size_of::<usize>())];
+            // SAFETY: storage has the requested byte capacity and suitable alignment.
+            if unsafe {
+                GetTokenInformation(
+                    token,
+                    TokenUser,
+                    storage.as_mut_ptr().cast(),
+                    length,
+                    &mut length,
+                )
+            } == 0
+            {
+                return Err("Could not read current-user token ownership".into());
+            }
+            // SAFETY: successful TokenUser query initializes a valid TOKEN_USER.
+            let user = unsafe { &*storage.as_ptr().cast::<TOKEN_USER>() };
+            if owner.is_null() || unsafe { EqualSid(owner, user.User.Sid) } == 0 {
+                return Err("Application state must be owned by the current user".into());
+            }
+            Ok(())
+        })();
+        // SAFETY: token is a live owned handle returned by OpenProcessToken.
+        unsafe {
+            CloseHandle(token);
+        }
+        checked
+    })();
+    // SAFETY: successful GetNamedSecurityInfoW owns a LocalAlloc descriptor.
+    unsafe {
+        LocalFree(descriptor.cast());
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,5 +759,90 @@ mod tests {
                 .is_err()
             );
         }
+    }
+    // Append within catalyst_core::local::tests after helper integration.
+    fn private_state_fixture() -> tempfile::TempDir {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tempfile::Builder::new()
+                .permissions(fs::Permissions::from_mode(0o700))
+                .tempdir()
+                .unwrap()
+        }
+        #[cfg(not(unix))]
+        {
+            tempfile::tempdir().unwrap()
+        }
+    }
+    #[test]
+    fn user_state_private_helpers_reject_links_traversal_wrong_owner_and_writable_leaf() {
+        let temp = private_state_fixture();
+        let base = temp.path().join("missing/state");
+        secure_state_tree(&base).unwrap();
+        state_owner(&base).unwrap();
+        assert!(base.is_dir());
+        assert!(secure_state_tree(Path::new("relative/state")).is_err());
+        assert!(secure_state_tree(&base.join("../escape")).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::{
+                fs::MetadataExt,
+                fs::{PermissionsExt, symlink},
+            };
+            assert_eq!(
+                fs::metadata(&base).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            symlink(&base, temp.path().join("linked")).unwrap();
+            assert!(secure_state_tree(&temp.path().join("linked/child")).is_err());
+            fs::set_permissions(&base, fs::Permissions::from_mode(0o770)).unwrap();
+            assert!(state_owner(&base).is_err());
+            fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+            // Normal non-root test runs use a known root-owned normal directory.
+            // No chown, HOME mutation or access to other users' files is needed.
+            if fs::metadata("/").unwrap().uid() != unsafe { libc::geteuid() } {
+                assert!(state_owner(Path::new("/")).is_err());
+            }
+        }
+    }
+    #[test]
+    fn state_lock_child_fixture() {
+        let Some(root) = std::env::var_os("STORYFOLD_LOCK_TEST_ROOT") else {
+            return;
+        };
+        let result = lock_named(Path::new(&root), PrivateNamespace::Sidebar, "youtube.lock");
+        let busy = std::env::var_os("STORYFOLD_LOCK_EXPECT_BUSY").as_deref()
+            == Some(std::ffi::OsStr::new("1"));
+        assert_eq!(result.is_err(), busy);
+    }
+    #[test]
+    fn user_state_lock_serializes_real_processes_and_releases_on_exit() {
+        let temp = private_state_fixture();
+        let root = temp.path().join("storyfold");
+        secure_state_tree(&root).unwrap();
+        state_owner(&root).unwrap();
+        let lock = lock_named(&root, PrivateNamespace::Sidebar, "youtube.lock").unwrap();
+        let child = |busy: bool| {
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "local::tests::state_lock_child_fixture",
+                    "--nocapture",
+                ])
+                .env("STORYFOLD_LOCK_TEST_ROOT", &root)
+                .env("STORYFOLD_LOCK_EXPECT_BUSY", if busy { "1" } else { "0" })
+                .status()
+                .unwrap()
+        };
+        assert!(child(true).success());
+        drop(lock);
+        assert!(child(false).success());
+        assert_eq!(
+            fs::metadata(root.join(".sidebar/private/youtube.lock"))
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

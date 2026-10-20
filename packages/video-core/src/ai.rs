@@ -7,6 +7,7 @@ mod search;
 pub use evidence::Evidence;
 pub use local::{LocalModel, TokenUsage, usage};
 pub use proposal::{HtmlExport, Proposal, export_html};
+pub(crate) use search::PublicProxy;
 pub use search::{SearchHit, search};
 
 #[cfg(test)]

@@ -333,15 +333,26 @@ fn spawn_camera(
         "1",
     ]);
     if generated {
-        command.args(["-re", "-f", "lavfi", "-i"]).arg(format!(
+        let source = format!(
             "testsrc2=size={}x{}:rate=30",
             settings.mode.width, settings.mode.height
-        ));
+        );
+        #[cfg(feature = "capture-test")]
+        let source = if std::env::var("STORYFOLD_CAPTURE_CLOCK_TEST").as_deref() == Ok("1") {
+            format!(
+                "{source},drawbox=x=0:y=0:w=1100:h=150:color=white:t=fill,drawtext=font=monospace:text='%{{localtime\\:%s.%3N}}':fontsize=90:fontcolor=black:x=24:y=24"
+            )
+        } else {
+            source
+        };
+        command
+            .args(["-re", "-thread_queue_size", "2", "-f", "lavfi", "-i"])
+            .arg(source);
     } else {
         command
             .args([
                 "-thread_queue_size",
-                "128",
+                "2",
                 "-f",
                 "v4l2",
                 "-input_format",
@@ -357,9 +368,18 @@ fn spawn_camera(
         } else {
             "anullsrc=channel_layout=stereo:sample_rate=48000"
         };
-        command.args(["-re", "-f", "lavfi", "-i", audio]);
+        command.args(["-re", "-thread_queue_size", "8", "-f", "lavfi", "-i", audio]);
     } else if let Some(microphone) = &settings.microphone_id {
-        command.args(["-thread_queue_size", "256", "-f", "pulse", "-i", microphone]);
+        command.args([
+            "-thread_queue_size",
+            "8",
+            "-fragment_size",
+            "3840",
+            "-f",
+            "pulse",
+            "-i",
+            microphone,
+        ]);
     }
     command.arg("-filter_complex").arg(format!("[0:v]fps=30,setpts=N/(30*TB),split=2[vrec][vp];[vp]scale={preview_width}:{preview_height},format=rgba[preview];[1:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a]"));
     command.args([
