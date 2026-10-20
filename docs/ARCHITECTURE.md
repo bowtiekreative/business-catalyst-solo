@@ -331,3 +331,39 @@ skipping transparent pixels; exhaustive and full-frame reference proofs gate it.
 Exact immutable insert/asset snapshots reuse bounded validation entries, while a
 changed snapshot is validated again. No font/image quality or camera FPS is reduced.
 The measured final scene still exceeds the30fps frame budget; see VALIDATION.
+
+## Local evidence review · milestone6
+
+`video_core::ai` exposes explicit blocking worker operations for real public RSS
+search, isolated Chromium screenshots, dropped PNG/JPEG/WebP evidence, Tesseract
+OCR, local Ollama rebuild, proposal validation, usage and approved-card HTML.
+Constructing the app/model does not browse, open a device, download a model or
+start inference. Search uses Bing's public RSS response, with1–12requested results
+(default4); this unversioned adapter is an explicit `shortcut:` and failures retain
+manual URL/screenshot options. The model never fabricates search result cards.
+
+Evidence uses bounded decoded images in a new ignored private temporary folder.
+Chrome gets a fresh profile without existing login/cookies, sandbox enabled and a
+public-only HTTPS CONNECT proxy. The proxy validates/pins each resolved endpoint,
+refuses private targets/other ports and bounds connection count, transfer and
+lifetime. Capture has a30second timeout and kills/reaps only its owned process
+group. Font/image preparation, browser/OCR/inference and file work stay off paint.
+
+The model client uses only127.0.0.1:11434, with proxy/redirect disabled. It checks
+that the named installed model reports local GGUF vision metadata and rejects
+remote/cloud aliases before sending the image. Strict serde proposals contain only
+summary/kind/title/source_url/blocks/highlights. Dynamic JSON schema constrains
+visible strings to exact OCR passages and fixes source_url; independent validation
+still checks every copied substring, Unicode highlight bounds, content limits and
+credential scan. OCR can misread pixels: the review screen explicitly asks the
+user to compare source and rebuilt card. JSON remains editable; nothing enters an
+approved slot before an explicit approval. Later cue snapshots stay immutable.
+
+Original screenshots copy into owned media only after explicit approval and a
+reviewed-byte check. Rebuilt text can approve directly or open the manual card
+editor. Standalone HTML exports only an approved slot, escapes accessible text,
+embeds the shared renderer's PNG without scripts/external assets, atomically
+publishes into exports and attempts a local project version. A failed save/version
+keeps the HTML with a separate visible error. Worker acknowledgement never
+replaces newer Editor state. Token totals are project-private, model-specific and
+summarized for the UTC month; there is no paid fallback or dollar budget gate.

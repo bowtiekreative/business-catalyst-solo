@@ -207,6 +207,9 @@ pub struct CaptureUi {
     autosave: bool,
 }
 impl CaptureUi {
+    pub fn preview_frame(&self) -> Option<std::sync::Arc<video_core::capture::PreviewFrame>> {
+        self.session.as_ref().and_then(|s| s.latest_preview())
+    }
     pub fn media_ms(&self) -> Option<u64> {
         self.session
             .as_ref()
@@ -318,8 +321,12 @@ impl CaptureUi {
             match store
                 .lock()
                 .map_err(|_| "Project worker failed".to_owned())
-                .and_then(|store| start(&store, settings).map_err(|e| e.to_string()))
-            {
+                .and_then(|store| {
+                    if token.is_cancelled() {
+                        return Err("Camera start cancelled".to_owned());
+                    }
+                    start(&store, settings).map_err(|e| e.to_string())
+                }) {
                 Ok(session) => {
                     if token.is_cancelled() {
                         let _ = session.stop();
@@ -422,9 +429,9 @@ impl CaptureUi {
             self.space_held = true;
         }
     }
-    pub fn mark(&mut self, slot: SlotKey, content: OverlayContent) -> bool {
+    pub fn mark(&mut self, slot: SlotKey, content: OverlayContent, duration_ms: u64) -> bool {
         if let Some(s) = &self.session {
-            if let Err(e) = s.mark_slot(slot, content, 5000) {
+            if let Err(e) = s.mark_slot(slot, content, duration_ms) {
                 self.error = Some(e.to_string());
                 return false;
             }

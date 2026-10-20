@@ -9,6 +9,7 @@ validation-screenshot = ["eframe/__screenshot"]
 capture-test = ["video-core/capture-test"]
 
 [dependencies]
+serde_json.workspace = true
 video-core.workspace = true
 eframe = { version = "=0.33.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }

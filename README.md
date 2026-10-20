@@ -106,7 +106,14 @@ folder, shows actual encoding progress and permits cancellation before publicati
 **Open export folder** reveals the result. Exports save the submitted snapshot
 and a local Git version; edits made during rendering remain an unsaved draft.
 
-Local AI, inserts, publishing and packaging are still being connected.
+**Build with local AI** searches public pages or accepts a dropped/chosen
+screenshot. Review the source beside the rebuilt card, then approve, edit or
+reject. The model name is editable; generation uses installed local Ollama vision
+models. Approved slots can export standalone HTML. Photo/video inserts provide
+full-screen/beside/behind-camera-card placement and draggable start/end zoom boxes,
+100–250% zoom, duration and easing. Video-insert audio is muted.
+
+Publishing and installer acceptance are still being connected.
 The working Dioxus Storyfold application continues until
 this studio reaches feature parity. See docs/VALIDATION.md for checks actually run;
 physical-camera timing/drift and Windows acceptance are not established.

@@ -450,3 +450,38 @@ Final post-repair no-insert export regressions passed2/2 in13.70s. Strict
 all-target/all-feature core Clippy, owned-source formatting and whitespace checks
 passed. CPU/cgroup topology is queried once during renderer construction, keeping
 frame composition free of topology/file queries. No physical device was opened.
+
+## Local AI evidence/review checks — 2026-10-20 (Edmonton)
+
+- Core AI6 unit checks passed: strict root/nested proposal fields, HTML escaping,
+  local vision/cloud gate, public target refusal, RSS parse/dedup and private
+  monthly usage accumulation. App AI3 checks passed: canceled late approval,
+  HTML acknowledgement/newer drafts/worker failure and minimum1160×800 accessible
+  review controls. The initial single-row action layout overflowed; the final
+  two-row controls pass the bounds check.
+- Explicit `STORYFOLD_AI_TEST=1 cargo test -p video-core --all-features --locked
+  --offline ai::tests:: -- --ignored --nocapture --test-threads=1`: **2 passed**,39.75s.
+  Generated local vision/OCR/proposal/review/HTML used installed qwen3.5:9b with
+  2224input+123output tokens. JSON and media remained unchanged before approval;
+  invented copied text was refused; HTML, local version and private usage passed.
+  The second check obtained4real RSS results and a1440×900 isolated public-page
+  Chromium screenshot whose OCR matched the current page; precanceled capture
+  was refused. No private recording, credentials, paid API or physical device
+  was used. These are actual tool/model checks, not a model capability assertion.
+- An initial unconstrained proposal rephrased OCR and was correctly rejected.
+  The final generation schema enumerates exact source passages while retaining
+  independent validation. The public-page check initially expected an old text
+  heading now drawn as a logo; it now checks actual captured documentation text.
+- Current official protocol references: https://docs.ollama.com/api/chat,
+  https://docs.ollama.com/capabilities/structured-outputs,
+  https://developer.chrome.com/docs/automation-and-testing/headless and
+  https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md.
+  Full native button interaction, final workspace checks and packaging are being
+  verified separately; no physical/Windows/Google-upload acceptance is implied.
+
+- Opt-in app `generated_review_buttons_roundtrip` passed23.40s. Actual egui
+  pointer clicks exercised source import, local Rebuild, shared Preview, Approve
+  and HTML export at1160×800. No approved slot/JSON/media changed before approval;
+  a newer draft made during export remained intact/dirty and the generated
+  source bytes were unchanged. This used the committed generated-text fixture,
+  local Qwen and a temporary project; no physical device or private recording.

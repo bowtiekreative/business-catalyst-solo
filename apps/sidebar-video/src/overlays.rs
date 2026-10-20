@@ -1,9 +1,9 @@
 //! Approved manual cards and bounded worker rendering. Preview and export use
 //! video-core's identical RGBA path; no font shaping or image decoding in paint.
-use crate::{Workspace, capture::CaptureUi, workspace::Store};
+use crate::{Workspace, capture::CaptureUi, inserts::InsertEditor, workspace::Store};
 use eframe::egui;
 use std::{
-    sync::mpsc,
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 use video_core::{
@@ -30,6 +30,8 @@ struct Job {
     studio: Studio,
     view: View,
     reduced: bool,
+    camera: Option<Arc<video_core::capture::PreviewFrame>>,
+    cancel: Cancellation,
 }
 struct Worker {
     sender: mpsc::SyncSender<Job>,
@@ -39,6 +41,8 @@ struct Draft {
     slot: SlotKey,
     content: OverlayContent,
     selection: Option<(usize, usize, usize)>,
+    insert_mode: bool,
+    insert_editor: InsertEditor,
 }
 struct ImagePending {
     receiver: mpsc::Receiver<Result<Option<String>, String>>,
@@ -58,28 +62,34 @@ pub struct OverlaysUi {
     last_reduced: bool,
     last_root: Option<std::path::PathBuf>,
     last_frame: Option<(u64, u64)>,
+    render_cancel: Cancellation,
     pub texture: Option<egui::TextureHandle>,
     pub error: Option<String>,
     pub reduced_motion: bool,
 }
 impl OverlaysUi {
     pub fn busy(&self) -> bool {
-        self.image.is_some()
+        self.image.is_some() || self.draft.as_ref().is_some_and(|d| d.insert_editor.busy())
     }
     pub fn editing(&self) -> bool {
         self.draft.is_some()
     }
     fn invalidate(&mut self) {
+        self.render_cancel.cancel();
+        self.render_cancel = Cancellation::default();
         self.epoch = self.epoch.wrapping_add(1);
         self.last_frame = None;
         self.texture = None;
     }
     pub fn edit(&mut self, slot: SlotKey, content: Option<OverlayContent>) {
+        let content =
+            content.unwrap_or_else(|| OverlayContent::new(OverlayKind::LowerThird, "New card"));
         self.draft = Some(Draft {
             slot,
-            content: content
-                .unwrap_or_else(|| OverlayContent::new(OverlayKind::LowerThird, "New card")),
+            insert_mode: content.insert.is_some(),
+            content,
             selection: None,
+            insert_editor: InsertEditor::default(),
         });
         self.error = None;
     }
@@ -110,22 +120,22 @@ impl OverlaysUi {
                 self.error = Some("Start a take before showing a timed card.".into());
                 return;
             }
-            if !capture.mark(slot, content.clone()) {
+            if !capture.mark(slot, content.clone(), cue_duration(&content)) {
                 return;
             }
             self.fires.retain(|f| f.slot != slot);
             self.fires.push(Fire {
                 slot,
+                duration_ms: cue_duration(&content),
                 content,
                 start_ms: at,
-                duration_ms: 5000,
             });
             self.invalidate();
         } else if project
             .edit(Edit::AddCueAtPlayhead {
                 sequence_ms: playhead,
                 slot,
-                duration_ms: 5000,
+                duration_ms: cue_duration(&content),
             })
             .is_none()
         {
@@ -227,12 +237,13 @@ impl OverlaysUi {
             .retain(|f| at >= f.start_ms && at - f.start_ms < f.duration_ms);
         let view = if let Some((content, start)) = &self.preview {
             let elapsed = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-            if elapsed >= 5000 {
+            let duration = cue_duration(content);
+            if elapsed >= duration {
                 self.preview = None;
                 self.invalidate();
                 View::Timeline(playhead)
             } else {
-                View::Live(vec![(content.clone(), elapsed, 5000)])
+                View::Live(vec![(content.clone(), elapsed, duration)])
             }
         } else if live {
             View::Live(
@@ -275,6 +286,8 @@ impl OverlaysUi {
             studio: project.studio().clone(),
             view,
             reduced: self.reduced_motion,
+            camera: capture.preview_frame(),
+            cancel: self.render_cancel.clone(),
         };
         if let Some(worker) = &self.worker {
             match worker.sender.try_send(job) {
@@ -337,7 +350,12 @@ impl OverlaysUi {
             Err(e) => self.error = Some(e.to_string()),
         }
     }
-    pub fn dialog(&mut self, project: &mut Workspace, ctx: &egui::Context) {
+    pub fn dialog(
+        &mut self,
+        project: &mut Workspace,
+        camera: video_core::OutputSize,
+        ctx: &egui::Context,
+    ) {
         let image = self
             .image
             .as_ref()
@@ -371,35 +389,55 @@ impl OverlaysUi {
         let mut close = false;
         let mut image = false;
         let response=egui::Modal::new(egui::Id::new("manual-overlay")).show(ctx,|ui|{
-            ui.set_width(520.);ui.heading(format!("Edit card {}",draft.slot.number()));
-            if self.preview.is_some() && let Some(texture)=&self.texture{ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(240.,135.)));}
-            egui::ScrollArea::vertical().max_height(430.).show(ui,|ui|{
-                egui::ComboBox::from_label("Card type").selected_text(draft.content.kind.label()).show_ui(ui,|ui|{for kind in [OverlayKind::LowerThird,OverlayKind::Stat,OverlayKind::ScreenshotCard,OverlayKind::NumberedList,OverlayKind::Photo,OverlayKind::Quote]{ui.selectable_value(&mut draft.content.kind,kind,kind.label());}});
+            ui.set_width(560.);ui.heading(format!("Edit card {}",draft.slot.number()));
+            if self.preview.is_some() && let Some(texture)=&self.texture{
+                ui.add(egui::Image::new(texture).max_size(egui::vec2(240.,180.)));
+            }
+            egui::ScrollArea::vertical().max_height(460.).show(ui,|ui|{
+                ui.add_enabled_ui(!draft.insert_editor.busy() && self.image.is_none(),|ui|{
+                    let before=draft.insert_mode;
+                    ui.horizontal(|ui|{ui.selectable_value(&mut draft.insert_mode,false,"Text / image card");ui.selectable_value(&mut draft.insert_mode,true,"Photo / video insert");});
+                    if before!=draft.insert_mode{
+                        draft.content=OverlayContent::new(if draft.insert_mode{OverlayKind::Photo}else{OverlayKind::LowerThird},if draft.insert_mode{"Media insert"}else{"New card"});
+                        draft.selection=None;draft.insert_editor=InsertEditor::default();self.preview=None;self.invalidate();
+                    }
+                });
                 ui.label("Title");ui.add(egui::TextEdit::singleline(&mut draft.content.title).char_limit(200));
-                let mut remove=None;
-                for(index,block) in draft.content.blocks.iter_mut().enumerate(){
-                    ui.horizontal(|ui|{egui::ComboBox::from_id_salt(("role",index)).selected_text(&block.role).show_ui(ui,|ui|{for role in ["heading","body","source","label"]{ui.selectable_value(&mut block.role,role.into(),role);}});if ui.button("Remove block").clicked(){remove=Some(index);}});
-                    let output=egui::TextEdit::multiline(&mut block.text).desired_rows(3).char_limit(2000).show(ui);
-                    if let Some(range)=output.cursor_range.filter(|r|!r.is_empty()){let r=range.as_sorted_char_range();draft.selection=Some((index,r.start,r.end));}
+                if draft.insert_mode{
+                    draft.insert_editor.show(ui,project,&mut draft.content,camera);
+                }else{
+                    egui::ComboBox::from_label("Card type").selected_text(draft.content.kind.label()).show_ui(ui,|ui|{for kind in [OverlayKind::LowerThird,OverlayKind::Stat,OverlayKind::ScreenshotCard,OverlayKind::NumberedList,OverlayKind::Photo,OverlayKind::Quote]{ui.selectable_value(&mut draft.content.kind,kind,kind.label());}});
+                    let mut remove=None;
+                    for(index,block)in draft.content.blocks.iter_mut().enumerate(){
+                        ui.horizontal(|ui|{egui::ComboBox::from_id_salt(("role",index)).selected_text(&block.role).show_ui(ui,|ui|{for role in ["heading","body","source","label"]{ui.selectable_value(&mut block.role,role.into(),role);}});if ui.button("Remove block").clicked(){remove=Some(index);}});
+                        let output=egui::TextEdit::multiline(&mut block.text).desired_rows(3).char_limit(2000).show(ui);
+                        if let Some(range)=output.cursor_range.filter(|r|!r.is_empty()){let r=range.as_sorted_char_range();draft.selection=Some((index,r.start,r.end));}
+                    }
+                    if let Some(index)=remove{draft.content.blocks.remove(index);draft.content.highlights.clear();draft.selection=None;}
+                    if draft.content.blocks.len()<12 && ui.button("Add text block").clicked(){draft.content.blocks.push(OverlayBlock{role:"body".into(),text:String::new()});}
+                    ui.horizontal(|ui|{if ui.add_enabled(draft.selection.is_some(),egui::Button::new("Highlight selected text")).clicked()&& let Some((block,start,end))=draft.selection.take(){draft.content.highlights.push(Highlight{block,start,end});}
+if ui.button("Clear highlights").clicked(){draft.content.highlights.clear();}});
+                    egui::ComboBox::from_label("Highlight style").selected_text(format!("{:?}",draft.content.highlight_style)).show_ui(ui,|ui|{for style in [HighlightStyle::MarkerSweep,HighlightStyle::UnderlineDraw,HighlightStyle::ZoomToLine,HighlightStyle::FadeRest]{ui.selectable_value(&mut draft.content.highlight_style,style,format!("{style:?}"));}});
+                    ui.horizontal(|ui|{ui.selectable_value(&mut draft.content.motion,OverlayMotion::FadeUp,"Fade up");ui.selectable_value(&mut draft.content.motion,OverlayMotion::Still,"Still");});
+                    if ui.add_enabled(self.image.is_none()&&project.store().is_some(),egui::Button::new("Choose screenshot / photo…")).clicked(){image=true;}
+                    if draft.content.image.is_some(){ui.label("Project image attached.");if ui.button("Remove image").clicked(){draft.content.image=None;}}
                 }
-                if let Some(index)=remove{draft.content.blocks.remove(index);draft.content.highlights.clear();draft.selection=None;}
-                if draft.content.blocks.len()<12 && ui.button("Add text block").clicked(){draft.content.blocks.push(OverlayBlock{role:"body".into(),text:String::new()});}
-                ui.horizontal(|ui|{if ui.add_enabled(draft.selection.is_some(),egui::Button::new("Highlight selected text")).clicked()&& let Some((block,start,end))=draft.selection.take(){draft.content.highlights.push(Highlight{block,start,end});}
-                    if ui.button("Clear highlights").clicked(){draft.content.highlights.clear();}});
-                egui::ComboBox::from_label("Highlight style").selected_text(format!("{:?}",draft.content.highlight_style)).show_ui(ui,|ui|{for s in [HighlightStyle::MarkerSweep,HighlightStyle::UnderlineDraw,HighlightStyle::ZoomToLine,HighlightStyle::FadeRest]{ui.selectable_value(&mut draft.content.highlight_style,s,format!("{s:?}"));}});
-                ui.horizontal(|ui|{ui.selectable_value(&mut draft.content.motion,OverlayMotion::FadeUp,"Fade up");ui.selectable_value(&mut draft.content.motion,OverlayMotion::Still,"Still");});
-                if ui.add_enabled(!self.busy() && project.store().is_some(),egui::Button::new("Choose screenshot / photo…")).clicked(){image=true;}
-                if draft.content.image.is_some(){ui.label("Project image attached.");if ui.button("Remove image").clicked(){draft.content.image=None;}}
             });
-            if self.busy(){ui.horizontal(|ui|{ui.spinner();ui.label("Importing image…");if ui.button("Cancel image import").clicked()&& let Some(p)=&self.image{p.cancel.cancel();}});}
+            if self.image.is_some(){ui.horizontal(|ui|{ui.spinner();ui.label("Importing image…");if ui.button("Cancel image import").clicked()&&let Some(p)=&self.image{p.cancel.cancel();}});}
             if let Some(error)=&self.error{ui.colored_label(egui::Color32::from_rgb(160,30,45),error);}
-            ui.horizontal(|ui|{if ui.add_enabled(!self.busy(),egui::Button::new("Approve card")).clicked(){approve=true;}
-if ui.button("Preview card").clicked(){preview=true;}
-if ui.add_enabled(!self.busy(),egui::Button::new("Cancel")).clicked(){close=true;}});
+            let busy=self.image.is_some()||draft.insert_editor.busy();
+            ui.horizontal(|ui|{if ui.add_enabled(!busy,egui::Button::new("Approve card")).clicked(){approve=true;}
+if ui.add_enabled(!busy,egui::Button::new("Preview card")).clicked(){preview=true;}
+if ui.add_enabled(!busy,egui::Button::new("Cancel")).clicked(){close=true;}});
             ui.label("Approved content is copied into each cue. Later card edits keep existing cues unchanged.");
         });
         if preview || approve {
-            match draft.content.validate() {
+            let validation = if draft.insert_mode && draft.content.insert.is_none() {
+                Err("Choose a photo or video before approving the insert".into())
+            } else {
+                draft.content.validate()
+            };
+            match validation {
                 Ok(()) => {
                     if preview {
                         self.preview = Some((draft.content.clone(), Instant::now()));
@@ -425,8 +463,24 @@ if ui.add_enabled(!self.busy(),egui::Button::new("Cancel")).clicked(){close=true
         if image {
             self.draft = Some(draft);
             self.choose_image(project, ctx);
-        } else if !close && (!response.should_close() || self.busy()) {
+        } else if !close
+            && (!response.should_close() || self.image.is_some() || draft.insert_editor.busy())
+        {
             self.draft = Some(draft);
+        }
+    }
+}
+fn cue_duration(content: &OverlayContent) -> u64 {
+    content
+        .insert
+        .as_ref()
+        .map_or(5000, |insert| insert.zoom.duration_ms)
+}
+impl Drop for OverlaysUi {
+    fn drop(&mut self) {
+        self.render_cancel.cancel();
+        if let Some(p) = &self.image {
+            p.cancel.cancel();
         }
     }
 }
@@ -436,69 +490,73 @@ fn spawn_renderer(ctx: egui::Context) -> Worker {
     std::thread::spawn(move || {
         let mut renderer = OverlayRenderer::new();
         let mut assets = OverlayAssets::new();
-        let mut prepared = None;
+        let mut prepared_root = None;
         while let Ok(job) = jobs.recv() {
             let result = (|| {
+                if job.cancel.is_cancelled() {
+                    return Err("Card preview changed".to_owned());
+                }
                 let renderer = renderer.as_mut().map_err(|e| e.to_string())?;
-                let contents: Vec<_> = match &job.view {
-                    View::Live(items) => items.iter().map(|(c, _, _)| c.clone()).collect(),
-                    View::Timeline(at) => job
-                        .studio
-                        .cues()
-                        .iter()
-                        .filter(|cue| {
-                            job.studio
-                                .cue_sequence_time(cue.id())
-                                .is_ok_and(|start| *at >= start && *at - start < cue.duration_ms())
-                        })
-                        .filter_map(|c| c.content().cloned())
-                        .collect(),
-                };
-                let mut images: Vec<_> = contents.iter().filter_map(|c| c.image.clone()).collect();
-                images.sort();
-                images.dedup();
-                let key = (job.root.clone(), images);
-                if prepared.as_ref() != Some(&key) {
-                    prepared = None;
+                if prepared_root != job.root {
                     assets.clear();
-                    if !key.1.is_empty() {
-                        let store = job
-                            .store
-                            .as_ref()
-                            .ok_or("Save the project before preparing its images")?
-                            .lock()
-                            .map_err(|_| "Project worker failed".to_owned())?;
-                        for content in &contents {
-                            assets
-                                .load_content(&store, content)
-                                .map_err(|e| e.to_string())?;
-                        }
-                    }
-                    prepared = Some(key);
+                    prepared_root = job.root.clone();
+                }
+                let active = match &job.view {
+                    View::Live(items) => items
+                        .iter()
+                        .map(|(content, elapsed_ms, duration_ms)| ActiveOverlay {
+                            content,
+                            elapsed_ms: *elapsed_ms,
+                            duration_ms: *duration_ms,
+                        })
+                        .collect(),
+                    View::Timeline(at) => video_core::renderer::active_overlays(&job.studio, *at)
+                        .map_err(|e| e.to_string())?,
+                };
+                if active
+                    .iter()
+                    .any(|o| o.content.media_paths().next().is_some())
+                {
+                    let store = job
+                        .store
+                        .as_ref()
+                        .ok_or("Save the project before preparing media")?
+                        .lock()
+                        .map_err(|_| "Project worker failed")?;
+                    assets
+                        .prepare_live(&store, &active, &job.cancel)
+                        .map_err(|e| e.to_string())?;
                 }
                 let options = RenderOptions {
                     reduced_motion: job.reduced,
                 };
-                match job.view {
-                    View::Timeline(at) => {
-                        renderer.render_timeline(&job.studio, at, &assets, options)
-                    }
-                    View::Live(items) => {
-                        let active: Vec<_> = items
-                            .iter()
-                            .map(|(content, elapsed_ms, duration_ms)| ActiveOverlay {
-                                content,
-                                elapsed_ms: *elapsed_ms,
-                                duration_ms: *duration_ms,
-                            })
-                            .collect();
-                        renderer.render_live(
-                            job.studio.orientation().output_size(),
-                            &active,
-                            &assets,
-                            options,
-                        )
-                    }
+                if active.iter().any(|o| o.content.insert.is_some()) {
+                    let camera = job.camera.map_or_else(
+                        || RgbaFrame {
+                            width: 16,
+                            height: 9,
+                            pixels: [247, 246, 242, 255].repeat(16 * 9),
+                        },
+                        |f| RgbaFrame {
+                            width: f.width,
+                            height: f.height,
+                            pixels: f.rgba.clone(),
+                        },
+                    );
+                    renderer.render_scene_live(
+                        job.studio.orientation().output_size(),
+                        &camera,
+                        &active,
+                        &assets,
+                        options,
+                    )
+                } else {
+                    renderer.render_live(
+                        job.studio.orientation().output_size(),
+                        &active,
+                        &assets,
+                        options,
+                    )
                 }
                 .map_err(|e| e.to_string())
             })();
@@ -560,6 +618,7 @@ mod tests {
         assert_eq!(project.studio().cues()[0].content(), Some(&content));
     }
     #[test]
+    #[allow(clippy::field_reassign_with_default)] // Drop cancels render work, so struct-update moves are unavailable.
     fn late_card_frame_from_a_previous_project_epoch_is_never_uploaded() {
         let mut project = project();
         let slot = SlotKey::try_from(1).unwrap();
@@ -574,13 +633,11 @@ mod tests {
         let (ctx, capture) = (egui::Context::default(), CaptureUi::default());
         let (sender, _jobs) = mpsc::sync_channel(1);
         let (results, receiver) = mpsc::sync_channel(1);
-        let mut ui = OverlaysUi {
-            worker: Some(Worker { sender, receiver }),
-            epoch: 2,
-            last_studio: Some(project.studio().clone()),
-            last_frame: Some((2, 1000 / 33)),
-            ..Default::default()
-        };
+        let mut ui = OverlaysUi::default();
+        ui.worker = Some(Worker { sender, receiver });
+        ui.epoch = 2;
+        ui.last_studio = Some(project.studio().clone());
+        ui.last_frame = Some((2, 1000 / 33));
         let frame = || RgbaFrame {
             width: 1,
             height: 1,

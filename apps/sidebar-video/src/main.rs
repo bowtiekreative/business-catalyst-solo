@@ -1,6 +1,8 @@
 //! Storyfold native Record studio. UI forwards edits to video-core.
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, Vec2};
+mod ai;
 mod capture;
+mod inserts;
 mod output;
 mod overlays;
 use output::{Action, OutputUi};
@@ -40,13 +42,6 @@ fn card(radius: u8) -> egui::Frame {
         .corner_radius(radius)
         .stroke(Stroke::new(1.0_f32, HAIRLINE))
         .inner_margin(16)
-}
-fn pending(ui: &mut egui::Ui, label: &str, reason: &str) -> egui::Response {
-    ui.add_enabled(
-        false,
-        egui::Button::new(label).min_size(egui::vec2(44., 44.)),
-    )
-    .on_disabled_hover_text(reason)
 }
 fn configure(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -131,6 +126,7 @@ struct TrimDraft {
 }
 #[derive(Default)]
 struct SidebarVideo {
+    ai: ai::AiUi,
     project: Workspace,
     capture: CaptureUi,
     cards: OverlaysUi,
@@ -165,7 +161,10 @@ impl SidebarVideo {
             .is_some()
     }
     fn request(&mut self, intent: Intent, ctx: &egui::Context) {
-        if self.cards.editing() {
+        if self.ai.open || self.ai.busy() {
+            self.project.status =
+                "Finish or close the AI review before replacing the project or closing.".into();
+        } else if self.cards.editing() {
             self.cards.error =
                 Some("Approve or cancel this card before replacing the project or closing.".into());
         } else if !self.capture.can_leave() || self.cards.busy() {
@@ -458,7 +457,7 @@ impl SidebarVideo {
         card(16).show(ui, |ui| {
             ui.set_min_height((ui.available_height()-2.).max(0.));
             ui.horizontal(|ui| {ui.label(strong("On-screen cards",14.).color(INK));hint(ui,"1–9");});
-            hint(ui,"Edit and approve a card. Show adds five seconds at the playhead or in your active take.");
+            hint(ui,"Edit and approve a card. Show adds a cue at the playhead or in your active take; inserts use their chosen duration.");
             ui.checkbox(&mut self.cards.reduced_motion,"Reduce card motion");
             let slots=self.project.studio().slots().to_vec();
             egui::ScrollArea::vertical().id_salt("sidebar_slots").max_height((ui.available_height()-112.).max(100.)).show(ui, |ui| {
@@ -470,7 +469,7 @@ impl SidebarVideo {
                     });
                 }
             });
-            pending(ui,"Build with local AI","The local AI overlay builder is being connected.");
+            if ui.add_enabled(!self.project.busy()&&self.project.store().is_some(),egui::Button::new("Build with local AI")).clicked(){self.ai.show_window(&self.project,ui.ctx());}
             if let Some(error)=&self.cards.error{ui.colored_label(Color32::from_rgb(160,30,45),error);}
         });
     }
@@ -483,6 +482,10 @@ impl SidebarVideo {
         if ui
             .add_enabled(
                 !self.project.busy()
+                    && !self.cards.busy()
+                    && !self.ai.open
+                    && !self.ai.busy()
+                    && !self.cards.editing()
                     && self.capture.can_leave()
                     && !self.project.studio().clips().is_empty(),
                 egui::Button::new(label).min_size(egui::vec2(44., 44.)),
@@ -972,7 +975,10 @@ impl SidebarVideo {
         if let Some(clip) = self.capture.poll(&mut self.project, ctx) {
             self.select(clip);
         }
-        self.shortcuts(ctx);
+        self.ai.poll(&mut self.project, ctx);
+        if !self.ai.open {
+            self.shortcuts(ctx);
+        }
         self.cards
             .tick(&self.project, &self.capture, self.playhead_ms, ctx);
         self.header(ctx);
@@ -1003,10 +1009,20 @@ impl SidebarVideo {
             )
             .show(ctx, |ui| self.stage(ui));
         self.dialogs(ctx);
-        self.cards.dialog(&mut self.project, ctx);
+        self.cards.dialog(
+            &mut self.project,
+            video_core::OutputSize {
+                width: self.capture.settings.mode.width,
+                height: self.capture.settings.mode.height,
+            },
+            ctx,
+        );
         self.capture.settings_dialog(&self.project, ctx);
         self.capture.recovery_dialog(&self.project, ctx);
         self.output.banner(&self.project, ctx);
+        if let Some((slot, content)) = self.ai.dialog(&mut self.project, ctx) {
+            self.cards.edit(slot, Some(content));
+        }
     }
 }
 fn timecode(ms: u64) -> String {
@@ -1037,7 +1053,9 @@ impl eframe::App for SidebarVideo {
                 || self.project.busy()
                 || !self.capture.can_leave()
                 || self.cards.busy()
-                || self.cards.editing())
+                || self.cards.editing()
+                || self.ai.open
+                || self.ai.busy())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request(Intent::Close, ctx);

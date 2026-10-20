@@ -1,5 +1,6 @@
 //! Validated local projects, timeline edits and explicit continuous capture.
 //! Construction never opens hardware, starts inference or makes network calls.
+pub mod ai;
 pub mod capture;
 pub mod export;
 pub mod insert;
