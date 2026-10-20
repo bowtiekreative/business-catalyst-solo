@@ -576,3 +576,30 @@ fit above Record. All23studio tests and strict app Clippy passed; installer test
 normal release build, package extraction/startup and installed hash verification
 passed. No hardware, private project, keychain or Google action was performed.
 Desktop input, actual picker foreground behavior and physical timing remain open.
+
+## Record controls and physical startup · 2026-10-20
+
+Ryan confirms Project opens and live camera video works; Record does nothing on
+the desktop. This remains an open acceptance failure, not a reproduced core
+failure. The generated egui capture/preview/recovery check passed again16.02s.
+The native OS fixture now uses actual X11/XTest Record holds, release outside,
+and taps on a generated live source at both1480×1000 and1160×800. Each saves two
+clips. Version0.1.3 adds a standard Start recording / Stop & save action above
+the video; actual OS clicks on it start and save a third clip at both sizes.
+Recording errors now appear above the stage rather than below the controls.
+25studio tests and strict app/core all-target/all-feature Clippy passed.
+
+The bounded physical backend startup example opened OBSBOT Tiny2 and Logitech
+C922 separately at1080p30 with microphone off, no take and no image viewing.
+First preview was2019ms and601ms respectively; each reached sequence60, stopped
+cleanly and deleted its temporary buffer. This measures startup, not end-to-end
+camera latency or drift. The player fixture also now verifies actual XTest
+Play/Pause, clock pause, fullscreen, Escape, natural EOF and replay under owned
+Xvfb, with IPC observation only. Source MP4 bytes remain unchanged.
+
+The optional input probe includes static Record control rectangles and state
+flags. Its100-record quota now counts changes/clicks rather than periodic live
+paints. Generated native input startup is gated behind both validation and
+capture-test features plus explicit environment flags. Normal packages exclude
+these features. Actual desktop Record, physical latency/drift/unplug, fresh OS,
+Google-account and Windows/macOS acceptance remain unverified.

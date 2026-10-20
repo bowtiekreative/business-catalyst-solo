@@ -62,7 +62,7 @@ impl Workspace {
     pub fn set_folder_dialog(&mut self, dialog: rfd::FileDialog) {
         self.folder_dialog = dialog;
     }
-    #[cfg(all(test, feature = "capture-test", target_os = "linux"))]
+    #[cfg(all(feature = "capture-test", target_os = "linux"))]
     pub fn test_project(path: &std::path::Path) -> Self {
         let (store, studio) = ProjectStore::create(path, "Generated UI check").unwrap();
         let mut workspace = Self::default();

@@ -194,6 +194,12 @@ impl SidebarVideo {
             }
         }
     }
+    fn show_camera_settings(&mut self, ctx: &egui::Context) {
+        self.capture.show_settings = true;
+        if self.capture.devices.is_none() {
+            self.capture.refresh(ctx);
+        }
+    }
     fn save(&mut self, ctx: &egui::Context, version: bool) {
         if self.project.busy() || !self.flush_name() {
             return;
@@ -322,10 +328,7 @@ impl SidebarVideo {
                         })
                         .clicked()
                     {
-                        self.capture.show_settings = true;
-                        if self.capture.devices.is_none() {
-                            self.capture.refresh(ctx);
-                        }
+                        self.show_camera_settings(ctx);
                     }
                     ui.add_enabled_ui(!self.project.loading(), |ui| {
                         ui.vertical(|ui| {
@@ -475,7 +478,7 @@ impl SidebarVideo {
                 });
                 ui.add_space(12.);
                 if ui.add_enabled(self.capture.can_leave() && !self.project.busy() && self.project.store().is_some(),egui::Button::new("Add media…")).on_disabled_hover_text("Save a project and stop its camera before importing local media.").clicked(){ self.capture.import(&self.project,ui.ctx()); }
-                if self.capture.busy(){ui.horizontal(|ui|{ui.spinner();ui.label(&self.capture.message);if ui.button("Cancel import / recovery").clicked(){self.capture.cancel_operation();}});}
+                if self.capture.busy(){ui.horizontal(|ui|{ui.spinner();ui.label(&self.capture.message);if ui.button("Cancel media operation").clicked(){self.capture.cancel_operation();}});}
                 ui.add_space(12.);ui.separator();ui.add_space(8.);
                 ui.label(strong("Saved on your computer",12.).color(INK));
                 hint(ui,"Project → Save stores your timeline. Save version adds a local Git checkpoint. Media files stay intact when you trim or remove clips.");
@@ -543,9 +546,25 @@ impl SidebarVideo {
         compact_row(ui, |ui| {
             ui.label(strong("Your recording", 15.).color(INK));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let response = ui.add_enabled(
+                    self.capture.can_record() && !self.project.loading(),
+                    egui::Button::new(if self.capture.taking() {
+                        "Stop & save"
+                    } else {
+                        "Start recording"
+                    }),
+                );
+                #[cfg(feature = "validation-screenshot")]
+                input_probe::record_toggle(&response);
+                if response.clicked() {
+                    self.capture.toggle_recording();
+                }
                 hint(ui, &format!("{} × {}", geometry.width, geometry.height));
             });
         });
+        if let Some(error) = &self.capture.error {
+            ui.colored_label(Color32::from_rgb(160, 30, 45), error);
+        }
         ui.add_space(12.);
         let stage_height = (ui.available_height() - 214.).max(130.);
         card(24).show(ui, |ui| {
@@ -619,10 +638,18 @@ impl SidebarVideo {
                     );
                 }
                 let label = stage.center() + egui::vec2(0., -8.);
+                let waiting = self.capture.waiting_for_preview();
+                let busy = self.capture.busy();
                 ui.painter().text(
                     label,
                     egui::Align2::CENTER_CENTER,
-                    "No camera open",
+                    if waiting {
+                        "Starting camera…"
+                    } else if busy {
+                        "Working…"
+                    } else {
+                        "Camera is off"
+                    },
                     FontId::new(
                         18_f32.min(stage.width() / 9.),
                         FontFamily::Name("Inter 600".into()),
@@ -632,7 +659,13 @@ impl SidebarVideo {
                 ui.painter().text(
                     label + egui::vec2(0., 29.),
                     egui::Align2::CENTER_CENTER,
-                    "Camera… → Enable camera",
+                    if waiting {
+                        "Record becomes available when live video is ready."
+                    } else if busy {
+                        &self.capture.message
+                    } else {
+                        "Choose camera below, then Enable camera."
+                    },
                     FontId::proportional(12.),
                     BODY,
                 );
@@ -641,9 +674,22 @@ impl SidebarVideo {
                         egui::WidgetInfo::labeled(
                             egui::WidgetType::Label,
                             false,
-                            "Camera stage. No camera open.",
+                            if waiting {
+                                "Camera preview starting. Record is not ready yet."
+                            } else {
+                                "Camera stage. Camera is off."
+                            },
                         )
                     });
+                if waiting || busy {
+                    ui.put(
+                        egui::Rect::from_center_size(
+                            label + egui::vec2(0., 60.),
+                            egui::vec2(22., 22.),
+                        ),
+                        egui::Spinner::new(),
+                    );
+                }
             }
             if let Some(texture) = &self.cards.texture {
                 ui.painter().image(
@@ -681,10 +727,22 @@ impl SidebarVideo {
                         "Record. Hold for a clip; tap to start or stop a long take.",
                     )
                 });
+                #[cfg(feature = "validation-screenshot")]
+                input_probe::record_control(&response, rect);
                 self.capture.record_button(&response, ui.ctx());
             });
             ui.add_space(8.);
-            ui.label(strong("Hold = clip · Tap = long take", 13.).color(BODY));
+            ui.label(
+                strong(
+                    if self.capture.taking() {
+                        "Recording · Tap again to stop"
+                    } else {
+                        "Record · Hold = clip · Tap = long take"
+                    },
+                    13.,
+                )
+                .color(BODY),
+            );
             hint(ui, &self.capture.timer());
             if self.capture.camera_running() {
                 ui.horizontal(|ui| {
@@ -707,9 +765,21 @@ impl SidebarVideo {
                         self.capture.cancel_take();
                     }
                 });
-            }
-            if let Some(error) = &self.capture.error {
-                ui.colored_label(Color32::from_rgb(160, 30, 45), error);
+            } else if self.project.store().is_some() {
+                if self.capture.busy() || self.capture.waiting_for_preview() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(&self.capture.message);
+                    });
+                } else if ui
+                    .add_enabled(
+                        !self.project.busy() && self.capture.can_leave(),
+                        egui::Button::new("Choose camera…"),
+                    )
+                    .clicked()
+                {
+                    self.show_camera_settings(ui.ctx());
+                }
             }
         });
     }
@@ -1166,6 +1236,11 @@ impl eframe::App for SidebarVideo {
                 recovery_pending: !self.capture.recoveries.is_empty(),
                 capture_busy: self.capture.busy(),
                 camera_running: self.capture.camera_running(),
+                can_record: self.capture.can_record(),
+                taking: self.capture.taking(),
+                preview_present: self.capture.texture.is_some(),
+                clip_count: self.project.studio().clips().len(),
+                capture_error: self.capture.error.is_some(),
                 allow_close: self.allow_close,
             },
         );
@@ -1221,6 +1296,20 @@ fn main() -> eframe::Result {
         },
         Box::new(move |cc| {
             configure(&cc.egui_ctx);
+            #[cfg(all(
+                feature = "capture-test",
+                feature = "validation-screenshot",
+                target_os = "linux"
+            ))]
+            if let Some(folder) = std::env::var_os("STORYFOLD_RECORD_GENERATED_FIXTURE") {
+                assert_eq!(std::env::var("STORYFOLD_INPUT_FIXTURE").as_deref(), Ok("1"));
+                assert_eq!(std::env::var("STORYFOLD_CAPTURE_TEST").as_deref(), Ok("1"));
+                let folder = std::path::PathBuf::from(folder);
+                assert!(folder.is_absolute() && !folder.exists());
+                app.project = Workspace::test_project(&folder);
+                app.name_draft = app.project.studio().name().into();
+                app.capture.enable_generated(&app.project, &cc.egui_ctx);
+            }
             app.project
                 .set_folder_dialog(rfd::FileDialog::new().set_parent(cc));
             Ok(Box::new(app))

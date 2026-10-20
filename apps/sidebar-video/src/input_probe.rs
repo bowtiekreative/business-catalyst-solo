@@ -1,10 +1,9 @@
 //! Opt-in, bounded diagnostics for this application's native input routing.
-//! Counts/state flags and one static Project-control rectangle only. Never input
+//! Counts/state flags and static Project/Record control rectangles only. Never input
 //! contents, pointer positions, project paths or window titles.
 use eframe::egui;
 use serde_json::json;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 pub(super) fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -30,6 +29,11 @@ pub(super) struct Flags {
     pub recovery_pending: bool,
     pub capture_busy: bool,
     pub camera_running: bool,
+    pub can_record: bool,
+    pub taking: bool,
+    pub preview_present: bool,
+    pub clip_count: usize,
+    pub capture_error: bool,
     pub allow_close: bool,
 }
 
@@ -64,6 +68,36 @@ struct Menu {
     popup_open: bool,
 }
 static PROJECT_MENU: Mutex<Option<Menu>> = Mutex::new(None);
+#[derive(Clone, Copy, PartialEq)]
+struct RecordControl {
+    rect: [f32; 4],
+    enabled: bool,
+    down: bool,
+    clicked: bool,
+}
+static RECORD_CONTROL: Mutex<Option<RecordControl>> = Mutex::new(None);
+static RECORD_TOGGLE: Mutex<Option<RecordControl>> = Mutex::new(None);
+
+pub(super) fn record_toggle(response: &egui::Response) {
+    control(&RECORD_TOGGLE, response, response.rect);
+}
+
+pub(super) fn record_control(response: &egui::Response, rect: egui::Rect) {
+    control(&RECORD_CONTROL, response, rect);
+}
+fn control(storage: &Mutex<Option<RecordControl>>, response: &egui::Response, rect: egui::Rect) {
+    if !enabled() {
+        return;
+    }
+    if let Ok(mut control) = storage.lock() {
+        *control = Some(RecordControl {
+            rect: [rect.min.x, rect.min.y, rect.max.x, rect.max.y],
+            enabled: response.enabled(),
+            down: response.is_pointer_button_down_on(),
+            clicked: response.clicked(),
+        });
+    }
+}
 
 pub(super) fn project_menu(response: &egui::Response, popup_open: bool) {
     if !enabled() {
@@ -90,7 +124,8 @@ struct Probe {
     counts: Counts,
     previous: Option<(Flags, Routing)>,
     previous_menu: Option<Menu>,
-    last_log: Option<Instant>,
+    previous_record: Option<RecordControl>,
+    previous_toggle: Option<RecordControl>,
 }
 
 pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
@@ -111,7 +146,8 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
         },
         previous: None,
         previous_menu: None,
-        last_log: None,
+        previous_record: None,
+        previous_toggle: None,
     });
     let Ok(mut probe) = PROBE.lock() else { return };
     if probe.lines >= 100 {
@@ -153,15 +189,16 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
         routing.egui_modal = memory.top_modal_layer().is_some();
     });
     let menu = PROJECT_MENU.lock().ok().and_then(|m| *m);
+    let control = RECORD_CONTROL.lock().ok().and_then(|control| *control);
+    let toggle = RECORD_TOGGLE.lock().ok().and_then(|control| *control);
     probe.paint_calls += 1;
-    // Preserve samples for real clicks. Coalesce motion instead of exhausting
-    // the 100-line cap while the user moves toward a button. Never force repaint:
-    // doing so could hide a repaint/wake-up failure under investigation.
-    let changed = probe.previous != Some((flags, routing)) || probe.previous_menu != menu;
-    let elapsed = probe
-        .last_log
-        .is_none_or(|last| last.elapsed() >= Duration::from_millis(300));
-    if probe.paint_calls > 4 && !changed && probe.counts.buttons == 0 && !elapsed {
+    // Save the bounded quota for state changes and clicks, not live-video paints.
+    // Never force repaint: that could hide a wake-up failure under investigation.
+    let changed = probe.previous != Some((flags, routing))
+        || probe.previous_menu != menu
+        || probe.previous_record != control
+        || probe.previous_toggle != toggle;
+    if probe.paint_calls > 4 && !changed && probe.counts.buttons == 0 {
         return;
     }
     probe.lines += 1;
@@ -180,6 +217,8 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
         "close_requested":routing.close_requested, "allow_close":flags.allow_close,
         "pixels_per_point":ctx.pixels_per_point(),
         "project_menu":menu.map(|m|json!({"label":"Project","rect":m.rect,"enabled":m.enabled,"clicked":m.clicked,"popup_open":m.popup_open})),
+        "record_control":control.map(|control|json!({"rect":control.rect,"enabled":control.enabled,"down":control.down,"clicked":control.clicked})),
+        "record_toggle":toggle.map(|control|json!({"rect":control.rect,"enabled":control.enabled,"down":control.down,"clicked":control.clicked})),
     });
     let flags_record = json!({
         "project_present":flags.project_present, "project_busy":flags.project_busy,
@@ -190,6 +229,9 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
         "youtube_open":flags.youtube_open, "youtube_busy":flags.youtube_busy,
         "camera_settings":flags.camera_settings, "recovery_pending":flags.recovery_pending,
         "capture_busy":flags.capture_busy, "camera_running":flags.camera_running,
+        "can_record":flags.can_record, "taking":flags.taking,
+        "preview_present":flags.preview_present, "clip_count":flags.clip_count,
+        "capture_error":flags.capture_error,
     });
     if let (Some(record), serde_json::Value::Object(flags)) = (record.as_object_mut(), flags_record)
     {
@@ -199,5 +241,6 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
     probe.counts = Counts::default();
     probe.previous = Some((flags, routing));
     probe.previous_menu = menu;
-    probe.last_log = Some(Instant::now());
+    probe.previous_record = control;
+    probe.previous_toggle = toggle;
 }

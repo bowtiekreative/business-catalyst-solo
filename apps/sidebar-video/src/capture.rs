@@ -90,6 +90,91 @@ mod tests {
         }]
     }
     #[test]
+    fn choose_camera_opens_settings_without_starting_a_device() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        ctx.enable_accesskit();
+        let mut app = SidebarVideo::new();
+        app.project = Workspace::test_project(&temp.path().join("project"));
+        app.name_draft = app.project.studio().name().into();
+        app.capture.devices = Some(DeviceInventory {
+            cameras: vec![],
+            microphones: vec![],
+            message: "Fixture inventory".into(),
+        });
+        let bounds = paint(&mut app, &ctx, vec![])
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, node)| {
+                (node.label() == Some("Choose camera…")).then(|| node.bounds().unwrap())
+            })
+            .expect("Visible camera setup action");
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.) as f32,
+            ((bounds.y0 + bounds.y1) / 2.) as f32,
+        );
+        paint(&mut app, &ctx, pointer(pos, true));
+        paint(&mut app, &ctx, pointer(pos, false));
+        assert!(app.capture.show_settings);
+        assert!(!app.capture.camera_running());
+        assert!(!app.capture.busy());
+    }
+    #[test]
+    fn recording_errors_stay_visible_above_the_live_stage_at_minimum_size() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        ctx.enable_accesskit();
+        let mut app = SidebarVideo::new();
+        app.project = Workspace::test_project(&temp.path().join("project"));
+        app.name_draft = app.project.studio().name().into();
+        let error = "Camera preview is stalled; wait or restart the camera before recording";
+        app.capture.error = Some(error.into());
+        app.capture.texture = Some(ctx.load_texture(
+            "fixture",
+            egui::ColorImage::filled([2, 2], egui::Color32::BLACK),
+            egui::TextureOptions::LINEAR,
+        ));
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1160., 800.),
+                )),
+                ..Default::default()
+            },
+            |ctx| app.show(ctx),
+        );
+        let nodes = output.platform_output.accesskit_update.unwrap().nodes;
+        let bounds = |label: &str| {
+            nodes
+                .iter()
+                .find(|(_, node)| {
+                    node.label()
+                        .or_else(|| node.value())
+                        .is_some_and(|s| s.starts_with(label))
+                })
+                .unwrap_or_else(|| panic!("Missing {label}; nodes {nodes:?}"))
+                .1
+                .bounds()
+                .unwrap()
+        };
+        let error_bounds = bounds(error);
+        let record_bounds = bounds("Record. Hold");
+        assert!(
+            error_bounds.y0 >= 112. && error_bounds.y1 < record_bounds.y0,
+            "Error must be visible above Record: {error_bounds:?}"
+        );
+        assert!(
+            record_bounds.y1 <= 512.,
+            "Record must remain above sequence: {record_bounds:?}"
+        );
+    }
+    #[test]
     #[ignore = "Opt-in generated FFmpeg UI input integration; requires STORYFOLD_CAPTURE_TEST=1, no physical camera"]
     fn generated_pointer_space_capture_saves_newer_drafts_and_recovery_is_idempotent() {
         assert_eq!(std::env::var("STORYFOLD_CAPTURE_TEST").as_deref(), Ok("1"));
@@ -256,6 +341,11 @@ impl CaptureUi {
             .as_ref()
             .is_some_and(|s| s.status().camera_running)
     }
+    pub fn waiting_for_preview(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.status().phase == CapturePhase::Starting)
+    }
     pub fn can_record(&self) -> bool {
         self.session.as_ref().is_some_and(|s| {
             matches!(
@@ -327,6 +417,14 @@ impl CaptureUi {
     pub fn enable(&mut self, project: &Workspace, ctx: &egui::Context) {
         self.enable_with(project, ctx, CaptureSession::start);
     }
+    #[cfg(all(
+        feature = "capture-test",
+        feature = "validation-screenshot",
+        target_os = "linux"
+    ))]
+    pub fn enable_generated(&mut self, project: &Workspace, ctx: &egui::Context) {
+        self.enable_with(project, ctx, CaptureSession::start_generated);
+    }
     fn enable_with(
         &mut self,
         project: &Workspace,
@@ -383,6 +481,13 @@ impl CaptureUi {
         }
         self.pointer_held = false;
         self.space_held = false;
+    }
+    pub fn toggle_recording(&mut self) {
+        if self.taking() {
+            self.stop_take();
+        } else if self.can_record() && self.press() {
+            self.release();
+        }
     }
     pub fn cancel_take(&mut self) {
         if let Some(s) = &self.session
@@ -715,6 +820,15 @@ impl CaptureUi {
         let response=egui::Modal::new(egui::Id::new("capture-settings")).show(ctx,|ui|{
             ui.set_width(440.);ui.heading("Camera and microphone");
             ui.label("Enable starts one continuous local capture session. Record marks clips from its buffer.");
+            if project.store().is_none() {
+                ui.label("Create or open a project first. Close this panel to use the Create project button.");
+            } else if project.busy() {
+                ui.label("Wait for the current project operation to finish before enabling the camera.");
+            }
+            if self.camera_running() {
+                ui.label("Stop the camera before changing its settings. Any active take will be saved.");
+                if ui.button("Stop camera").clicked() { self.stop(); }
+            }
             ui.add_enabled_ui(self.can_leave(),|ui|{
                 if let Some(devices)=&self.devices {
                     let old=self.settings.camera_id.clone();
