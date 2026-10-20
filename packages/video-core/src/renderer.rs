@@ -15,7 +15,9 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use tiny_skia::{FillRule, IntSize, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
+use tiny_skia::{
+    FillRule, IntRect, IntSize, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform,
+};
 
 pub const INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 pub const INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
@@ -201,6 +203,8 @@ pub struct OverlayRenderer {
     fonts: FontSystem,
     glyphs: SwashCache,
     layouts: VecDeque<(LayoutKey, Arc<CardLayout>)>,
+    #[cfg(test)]
+    full_layer_reference: bool,
 }
 impl OverlayRenderer {
     pub fn new() -> Result<Self> {
@@ -217,6 +221,8 @@ impl OverlayRenderer {
             fonts: FontSystem::new_with_locale_and_db("en-US".into(), db),
             glyphs: SwashCache::new(),
             layouts: VecDeque::new(),
+            #[cfg(test)]
+            full_layer_reference: false,
         })
     }
     pub fn render_timeline(
@@ -292,14 +298,11 @@ impl OverlayRenderer {
         let mut canvas =
             Pixmap::new(size.width, size.height).ok_or("Cannot allocate overlay frame")?;
         for overlay in active {
-            overlay.content.validate()?;
             let image = assets.image(overlay.content)?;
-            let key = LayoutKey {
-                size,
-                content: overlay.content.clone(),
-                image_size: image.map(|i| (i.width(), i.height())),
-            };
-            let layout = if let Some(index) = self.layouts.iter().position(|(k, _)| k == &key) {
+            let image_size = image.map(|i| (i.width(), i.height()));
+            let layout = if let Some(index) = self.layouts.iter().position(|(key, _)| {
+                key.size == size && key.content == *overlay.content && key.image_size == image_size
+            }) {
                 let cached = self
                     .layouts
                     .remove(index)
@@ -308,6 +311,15 @@ impl OverlayRenderer {
                 self.layouts.push_front(cached);
                 layout
             } else {
+                // The key owns this exact validated snapshot. Changed text,
+                // highlights, motion or image always revalidates; cache hits
+                // need not recompile the credential scan on every frame.
+                overlay.content.validate()?;
+                let key = LayoutKey {
+                    size,
+                    content: overlay.content.clone(),
+                    image_size,
+                };
                 let layout = Arc::new(self.layout(size, overlay.content, image)?);
                 self.layouts.push_front((key, layout.clone()));
                 self.layouts.truncate(MAX_LAYOUTS);
@@ -349,14 +361,27 @@ impl OverlayRenderer {
                 opacity: progress,
                 ..PixmapPaint::default()
             };
-            canvas.draw_pixmap(
-                0,
-                0,
-                layer.as_ref(),
-                &paint,
-                Transform::from_translate(0., if still { 0. } else { 24. * (1. - progress) }),
-                None,
-            );
+            let transform =
+                Transform::from_translate(0., if still { 0. } else { 24. * (1. - progress) });
+            // Retain the old full-layer path only as an opt-in test reference.
+            #[cfg(test)]
+            if self.full_layer_reference {
+                canvas.draw_pixmap(0, 0, layer.as_ref(), &paint, transform, None);
+                continue;
+            }
+            // Layout already keeps every glyph/image inside this card. Avoid
+            // resampling/compositing an entire mostly-transparent HD frame for
+            // each card. One empty pixel preserves anti-alias sampling edges.
+            let left = (c.x().floor() as i32 - 1).max(0);
+            let top = (c.y().floor() as i32 - 1).max(0);
+            let right = (c.right().ceil() as u32 + 1).min(size.width);
+            let bottom = (c.bottom().ceil() as u32 + 1).min(size.height);
+            let bounds = IntRect::from_xywh(left, top, right - left as u32, bottom - top as u32)
+                .ok_or("Invalid overlay composition bounds")?;
+            let cropped = layer
+                .clone_rect(bounds)
+                .ok_or("Cannot prepare card layer")?;
+            canvas.draw_pixmap(left, top, cropped.as_ref(), &paint, transform, None);
         }
         if self.glyphs.image_cache.len() > 8192 {
             self.glyphs = SwashCache::new();

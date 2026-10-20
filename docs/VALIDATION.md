@@ -268,3 +268,32 @@ native overlays. Keep the preview worker/queue bounded, report this limitation,
 and measure a scoped optimization before promising smooth30fps card animation.
 No performance optimization was included in the renderer correctness checkpoint.
 The benchmark remains ignored by ordinary test runs.
+
+### Bounded renderer performance correction · 2026-10-19
+
+The same generated30-frame/three-card/1920×1080 release benchmark measured:
+
+| Implementation | Mean | Median | p95 | Maximum | Throughput |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Card-bound composition only |29.775ms|29.458ms|36.564ms|37.734ms|33.58fps|
+| Card bounds + exact validated-layout reuse |23.052ms|22.500ms|30.329ms|34.770ms|43.38fps|
+
+The isolated unchanged-content validation loop measured6.286ms per three-card
+frame. Cache reuse does not remove validation: a new regression mutates a cached
+snapshot with credential-like text, an invalid highlight range and a control
+character; each fails and the original cache entry remains the sole valid entry.
+The focused regression and strict all-target/all-feature core Clippy passed.
+
+The release median and p95 meet the representative33.33ms target. The maximum
+sample still exceeded it; nine simultaneous cards, physical capture interaction,
+other hardware/platforms and sustained performance have not been measured.
+No camera frame-rate change, image downsampling or layout simplification was made.
+
+Final performance-checkpoint checks passed: release video-core suite **41 passed,
+4 opt-in tests ignored**; strict all-target/all-feature core Clippy; formatting;
+and whitespace checks. The explicit release old-path/reference proof passed for
+every combination of six overlay types, four highlight styles, both shapes and
+four animation times (192 output-frame comparisons), with exact straight-RGBA
+byte equality. Its full-frame reference switch exists only under `cfg(test)`.
+The previously recorded timing uses the same final rendering implementation;
+expanding the equivalence matrix changed only the ignored proof harness.

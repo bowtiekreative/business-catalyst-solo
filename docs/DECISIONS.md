@@ -214,3 +214,16 @@
 - This checkpoint proves renderer behavior, not a finished capture/playback UI,
   exported-video parity, AI review, inserts, YouTube or an installer. M7's zoom
   editor remains separate from the small highlight-focus animation here.
+
+### Bounded renderer performance checkpoint
+
+The requested cached three-card benchmark measured70.656ms mean/79.057ms p95 at
+1080p in release, missing the33.33ms live-animation budget. Cropping composition
+to existing card bounds reduced mean to29.775ms but p95 remained36.564ms. An
+isolated measurement identified6.286ms/frame of repeated unchanged content
+validation, including credential regex compilation. Retain validation with the
+exact immutable layout-cache key; a changed field always misses and revalidates.
+This preserves the scanner and all domain rules rather than weakening validation.
+Together the two targeted changes measured23.052ms mean/30.329ms p95. Do not infer
+all-overlay/hardware/platform performance from this single representative run.
+Keep the bounded UI worker queue; do not reduce camera preview frame rate.

@@ -699,4 +699,119 @@ fn cached_1080p_three_card_timing() {
         times[29],
         30000. / total
     );
+    let start = std::time::Instant::now();
+    for _ in 0..30 {
+        for card in &cards {
+            card.validate().unwrap();
+        }
+    }
+    println!(
+        "isolated-three-card-validation mean_ms={:.3}",
+        start.elapsed().as_secs_f64() * 1000. / 30.
+    );
+}
+
+#[test]
+fn validated_layout_cache_never_accepts_changed_untrusted_content() {
+    let mut renderer = OverlayRenderer::new().unwrap();
+    let assets = OverlayAssets::new();
+    let mut card = content(OverlayKind::Quote);
+    frame(
+        &mut renderer,
+        &card,
+        Orientation::Horizontal,
+        1800,
+        &assets,
+        false,
+    );
+    let original = card.clone();
+    card.title = "api_key=sk-ant-very-private-key-value-do-not-save".into();
+    assert!(
+        renderer
+            .render_live(
+                Orientation::Horizontal.output_size(),
+                &[ActiveOverlay {
+                    content: &card,
+                    elapsed_ms: 1800,
+                    duration_ms: 5000
+                }],
+                &assets,
+                RenderOptions::default()
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("credential")
+    );
+    card = original.clone();
+    card.highlights[0].end = 999;
+    assert!(
+        renderer
+            .render_live(
+                Orientation::Horizontal.output_size(),
+                &[ActiveOverlay {
+                    content: &card,
+                    elapsed_ms: 1800,
+                    duration_ms: 5000
+                }],
+                &assets,
+                RenderOptions::default()
+            )
+            .is_err()
+    );
+    card = original;
+    card.blocks[0].text.push('\0');
+    assert!(
+        renderer
+            .render_live(
+                Orientation::Horizontal.output_size(),
+                &[ActiveOverlay {
+                    content: &card,
+                    elapsed_ms: 1800,
+                    duration_ms: 5000
+                }],
+                &assets,
+                RenderOptions::default()
+            )
+            .is_err()
+    );
+    assert_eq!(renderer.layouts.len(), 1);
+}
+
+#[test]
+#[ignore = "Explicit full-resolution cropped/full reference equivalence proof"]
+fn cropped_layers_are_identical_to_full_frame_reference() {
+    let (_temp, store) = project_image();
+    let mut assets = OverlayAssets::new();
+    let mut cropped = OverlayRenderer::new().unwrap();
+    let mut full = OverlayRenderer::new().unwrap();
+    full.full_layer_reference = true;
+    for kind in [
+        OverlayKind::LowerThird,
+        OverlayKind::Stat,
+        OverlayKind::ScreenshotCard,
+        OverlayKind::NumberedList,
+        OverlayKind::Photo,
+        OverlayKind::Quote,
+    ] {
+        let mut card = content(kind);
+        assets.load_content(&store, &card).unwrap();
+        for style in [
+            HighlightStyle::MarkerSweep,
+            HighlightStyle::UnderlineDraw,
+            HighlightStyle::ZoomToLine,
+            HighlightStyle::FadeRest,
+        ] {
+            card.highlight_style = style;
+            for shape in [Orientation::Horizontal, Orientation::Vertical] {
+                for ms in [0, 90, 400, 900] {
+                    let expected = frame(&mut full, &card, shape, ms, &assets, false);
+                    let actual = frame(&mut cropped, &card, shape, ms, &assets, false);
+                    assert!(
+                        actual == expected,
+                        "Cropped layer changed bytes: {kind:?} {style:?} {shape:?} {ms}ms"
+                    );
+                }
+            }
+        }
+    }
 }

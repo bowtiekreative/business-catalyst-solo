@@ -178,3 +178,11 @@ fade-rest use Unicode scalar highlight ranges mapped through shaped/wrapped
 lines. Reduced motion or Still presents the complete static state immediately,
 without movement, reveal or zoom. Subsequent AI review and insert/zoom editing
 can extend these content/renderer boundaries without a second UI renderer.
+
+The performance checkpoint composites only each card's conservative pixel bounds,
+with a one-pixel transparent sampling margin, instead of resampling a transparent
+full-HD layer for every card. Full project-size output and all layout/motion math
+stay unchanged. Exact content/geometry/image-size cache keys also retain successful
+content validation: every changed snapshot revalidates before it can enter the
+cache. The test-only old full-layer path proves byte equality and is absent from
+normal builds. Camera capture/preview frame rate is unaffected by this optimization.
