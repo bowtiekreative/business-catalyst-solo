@@ -287,8 +287,12 @@ ZoomPoint stores source-relative integer center and100–250% zoom; ZoomSpec sto
 start/end, duration and Smooth/Steady/Snappy easing. The core computes cover crop,
 interpolation/clamping and box-to-model conversion from absolute time. Reduced
 motion freezes the approved start box. The integer-millisecond clock tolerates
-half a millisecond when mapping to the30fps source grid, preserving every rounded
-output frame without repeated33ms accumulation or alternating dropped frames.
+two-thirds of a millisecond when mapping rounded camera/cue differences to the
+30fps source grid:133ms−67ms is66ms but still represents two frames. The chosen
+source-in frame and elapsed-frame count are quantized separately, so fractional
+source offsets cannot cause phase-dependent repeats or skips. This is a clock
+quantization tolerance, not nearest-frame rounding:5999ms remains frame179,
+and the decoder still refuses indices outside the actual proxy frame count.
 
 SceneLayout owns both shapes and three layouts. Fullscreen hides the camera image;
 Beside splits landscape horizontally or portrait vertically. Behind places an

@@ -89,11 +89,19 @@ impl InsertContent {
     pub fn source_frame(&self, elapsed_ms: u64) -> Result<Option<u64>> {
         match self.source {
             InsertSource::Photo { .. } => Ok(None),
-            InsertSource::Video { source_in_ms, .. } => Ok(Some(frame_index(
+            InsertSource::Video { source_in_ms, .. } => {
+                // The selected first frame is fixed. Quantizing the sum instead
+                // makes a fractional source offset repeat/skip frames as the
+                // independently rounded camera/cue clocks change phase.
                 source_in_ms
                     .checked_add(elapsed_ms)
-                    .ok_or("Insert source time overflows")?,
-            )?)),
+                    .ok_or("Insert source time overflows")?;
+                Ok(Some(
+                    frame_index(source_in_ms)?
+                        .checked_add(frame_index(elapsed_ms)?)
+                        .ok_or("Insert source frame overflows")?,
+                ))
+            }
         }
     }
 }
@@ -276,7 +284,11 @@ pub(crate) fn cover_view(source: OutputSize, target: OutputSize) -> Result<Viewp
     })
 }
 pub(crate) fn frame_index(ms: u64) -> Result<u64> {
-    u64::try_from((u128::from(ms) * 30 + 15) / 1000)
+    // Rounded 30fps timestamps have thirds-of-a-millisecond errors. Their
+    // difference can be 2/3ms early (133 - 67 = 66 for two frames), so tolerate
+    // exactly that quantization error, not half a frame. 5999ms remains179.
+    // The decoder still rejects every index beyond the actual proxy frame count.
+    u64::try_from((u128::from(ms) * 30 + 20) / 1000)
         .map_err(|_| "Insert source frame overflows".into())
 }
 pub(crate) fn ease(kind: ZoomEasing, t: f64) -> f64 {

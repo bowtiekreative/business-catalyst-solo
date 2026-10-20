@@ -196,6 +196,15 @@ fn generated_video_proxy_exact_seek_stale_frame_cancel_and_links() {
     for (index, frame) in [(1, 75), (0, 0), (2, 150)] {
         assert_eq!(cursor.frame_at(frame, &cancel).unwrap(), &frames[index]);
     }
+    let exact_frames: Vec<_> = (0..28)
+        .map(|frame| cursor.frame_at(frame, &cancel).unwrap().clone())
+        .collect();
+    assert!(cursor.frame_at(frame_index(6499).unwrap(), &cancel).is_ok());
+    assert!(
+        cursor
+            .frame_at(frame_index(6500).unwrap(), &cancel)
+            .is_err()
+    );
     assert!(cursor.frame_at(proxy.frames, &cancel).is_err());
     let before = Instant::now();
     drop(cursor);
@@ -208,6 +217,40 @@ fn generated_video_proxy_exact_seek_stale_frame_cancel_and_links() {
         InsertPlacement::Fullscreen,
     );
     let mut assets = OverlayAssets::new();
+    // The shared asset path must decode the consecutive source frames even when
+    // its elapsed clock came from subtracting two rounded camera timestamps.
+    // Include fractional source offsets on both sides of a frame boundary.
+    for (source_in_ms, first) in [(0, 0), (32, 0), (33, 1), (666, 20)] {
+        let phased = self::content(
+            InsertSource::Video {
+                path: proxy.path.clone(),
+                source_in_ms,
+            },
+            InsertPlacement::Fullscreen,
+        );
+        for phase in 0..3 {
+            for frame in 0..8 {
+                let rounded_ms = |index: u64| (index * 1000 + 15) / 30;
+                let elapsed_ms = rounded_ms(phase + frame) - rounded_ms(phase);
+                assets
+                    .prepare_live(
+                        &store,
+                        &[ActiveOverlay {
+                            content: &phased,
+                            elapsed_ms,
+                            duration_ms: 6000,
+                        }],
+                        &cancel,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    assets.insert_preview(&phased, elapsed_ms).unwrap(),
+                    exact_frames[(first + frame) as usize],
+                    "source {source_in_ms}ms, cue phase {phase}, elapsed {elapsed_ms}ms"
+                );
+            }
+        }
+    }
     let active = [ActiveOverlay {
         content: &content,
         elapsed_ms: 0,

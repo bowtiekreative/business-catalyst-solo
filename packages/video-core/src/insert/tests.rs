@@ -192,3 +192,55 @@ fn integer_millisecond_clock_preserves_every_output_frame_without_drift() {
     }
     assert_eq!(frame_index(5999).unwrap(), 179);
 }
+
+#[test]
+fn cue_relative_clock_preserves_consecutive_frames_at_every_start_phase() {
+    let rounded_ms = |frame: u64| (frame * 1000 + 15) / 30;
+    // Three frame-start phases exhaust the repeating rounded 30fps clock.
+    // Exercise every source-in millisecond residue, including 32ms: adding that
+    // offset before clock quantization used to jump from frame0 to frame2.
+    for source_in_ms in 0..1000 {
+        let insert = InsertContent {
+            source: InsertSource::Video {
+                path: "media/proxy.mp4".into(),
+                source_in_ms,
+            },
+            placement: InsertPlacement::Fullscreen,
+            zoom: ZoomSpec::default(),
+        };
+        let first = insert.source_frame(0).unwrap().unwrap();
+        for phase in 0..3 {
+            for frame in 0..=30 * 600 {
+                let elapsed = rounded_ms(phase + frame) - rounded_ms(phase);
+                assert_eq!(
+                    insert.source_frame(elapsed).unwrap(),
+                    Some(first + frame),
+                    "source {source_in_ms}ms, cue phase {phase}, elapsed {elapsed}ms"
+                );
+            }
+        }
+    }
+    // Explicitly retain floor-like source-end behavior rather than nearest-
+    // frame rounding (which would select invalid frame180 at5999ms).
+    assert_eq!(frame_index(5999).unwrap(), 179);
+    assert_eq!(frame_index(6000).unwrap(), 180);
+    assert_eq!(frame_index(6499).unwrap(), 194);
+    assert_eq!(frame_index(6500).unwrap(), 195);
+    for source_in_ms in [600_032, u64::MAX - 600_000] {
+        let insert = InsertContent {
+            source: InsertSource::Video {
+                path: "media/proxy.mp4".into(),
+                source_in_ms,
+            },
+            placement: InsertPlacement::Fullscreen,
+            zoom: ZoomSpec::default(),
+        };
+        let first = insert.source_frame(0).unwrap().unwrap();
+        for phase in 0..3 {
+            for frame in [0, 1, 2, 29, 30, 31, 17_999, 18_000] {
+                let elapsed = rounded_ms(phase + frame) - rounded_ms(phase);
+                assert_eq!(insert.source_frame(elapsed).unwrap(), Some(first + frame));
+            }
+        }
+    }
+}

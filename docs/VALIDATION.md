@@ -451,6 +451,16 @@ all-target/all-feature core Clippy, owned-source formatting and whitespace check
 passed. CPU/cgroup topology is queried once during renderer construction, keeping
 frame composition free of topology/file queries. No physical device was opened.
 
+Cue-relative clock follow-up: the focused insert suite passed5/5 in4.55s.
+Its property loop checked54,003,000 mappings (all1000 source-in millisecond
+residues × three rounded cue-start phases × every frame through600seconds),
+plus large/u64-bound offsets and source-time overflow refusal. The generated
+cursor/assets regression passed1/1 in3.66s:96 prepared source frames from four
+source offsets and all three cue phases exactly matched independently decoded
+proxy frames. At the6.5s proxy boundary6499ms selected valid frame194 and6500ms
+was refused;5999ms still maps to179. The corrected mapping fixes the66ms/two-
+frame cue difference without relaxing the actual decoder frame-count bound.
+
 ## Local AI evidence/review checks — 2026-10-20 (Edmonton)
 
 - Core AI6 unit checks passed: strict root/nested proposal fields, HTML escaping,
