@@ -227,3 +227,35 @@ This preserves the scanner and all domain rules rather than weakening validation
 Together the two targeted changes measured23.052ms mean/30.329ms p95. Do not infer
 all-overlay/hardware/platform performance from this single representative run.
 Keep the bounded UI worker queue; do not reduce camera preview frame rate.
+
+## Sequence MP4 export · milestone 8
+
+- Reuse the existing worker/Cancellation pattern through one blocking typed core
+  function, instead of adding an async runtime or a second UI-owned job model.
+  The UI draws actual returned progress and sends cancel; all layout, timing,
+  media paths, process flags and version behavior stay in video-core.
+- Normalize each trimmed source into fixed-size30fps H.264 plus exact-length
+ 48kHz stereo PCM, then concat and burn shared RGBA in a final encode. This initial
+  baseline handles mixed sources without opening thousands of simultaneous
+  inputs or accumulating AAC priming per cut. It uses private disk and a second
+  video encode; optimize only after preserving frame/timing/parity acceptance.
+- Round cumulative sequence boundaries on the absolute30fps grid. Reject a
+  zero-frame clip rather than silently dropping it. Keep the vertical-over180s
+  warning separate from export eligibility; there is no interview-duration cap.
+- Use the same renderer timeline entry point and explicit straight alpha. Feed
+  transparent frames outside cues; do not recreate card text/layout in FFmpeg or
+  the UI. A legacy active kind-only cue is an error. Asset preparation happens at
+  active-set changes, allowing bounded image memory across a long sequence.
+- Read real FFmpeg `-progress` key/value blocks. Keep phase percentages monotonic
+  and weighted by completed media time, never by a wall-clock animation. Observe
+  actual file modification only to avoid treating long fast-start work as a
+  stalled child; file size does not simulate encoding progress.
+- Publish a verified unique MP4 through the shared confined atomic publisher,
+  then save/version the exact snapshot against the original project baseline.
+  Preserve the MP4 when project save or local Git fails and return both outcomes.
+  An already-versioned unchanged snapshot may reuse its verified HEAD. Never push.
+- Primary behavior references checked at build time: [FFmpeg progress options](https://ffmpeg.org/ffmpeg.html#Advanced-options),
+  [overlay filter](https://ffmpeg.org/ffmpeg-filters.html#overlay), and the existing
+  system FFmpeg concat/codec implementation. Lossy H.264/YUV conversion means
+  decoded-pixel comparisons need an explicit tolerance; shared raw RGBA equality
+  alone is not proof of encoded-video equality.

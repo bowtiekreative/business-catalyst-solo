@@ -322,3 +322,44 @@ expanding the equivalence matrix changed only the ignored proof harness.
 The installed Dioxus application remains the usable release. Native sequence
 playback/export integration, local AI, inserts, publishing/keychain, packaging
 and physical timing/drift/unplug acceptance remain incomplete.
+
+## Sequence MP4 export — 2026-10-19 (Edmonton)
+
+- Release video-core all-feature suite: **47 passed,6 opt-in tests ignored**.
+  Both all-feature and default-feature all-target warning-denied Clippy passed.
+  Export sources passed formatting and whitespace checks. The coordinator owns
+  final workspace/app checks; a newly added playback module was not part of this
+  export checkpoint's formatting scope.
+- Explicit generated-only release integration command, with
+  `STORYFOLD_CAPTURE_TEST=1`:
+  `cargo test --release -p video-core --all-features --locked --offline
+  export::tests::generated_ -- --ignored --nocapture --test-threads=1`.
+  Both tests passed, including a repeated run after enabling automatic RF64 for
+  intermediate WAV files. Test folders include spaces. No hardware, network,
+  account or upload action occurred.
+- Both1920×1080 and1080×1920 generated exports contained24 frames at30fps,
+  H.264 video and AAC48kHz stereo. Trimmed red/silent then blue/tone sources kept
+  sequence order and expected audio. Decoded RGB difference from the shared
+  renderer within a visible overlay was2.177 horizontal and1.058 vertical mean
+  absolute channel values, under the explicit6-value tolerance. Vertical used
+  animated cards, horizontal reduced motion. Samples outside the cue interval
+  contained no overlay. These are specific lossy-encode parity checks, not proof
+  for every camera, overlay combination or platform.
+- Actual FFmpeg progress changed and stayed monotonic. Mid-encode cancellation
+  left no final MP4 or new project version. Existing names, a destination created
+  during encoding and a symlink destination were preserved/refused. Generated
+  sources stayed unchanged. Successful exports saved a local Git version;
+  deliberately broken Git identity retained the valid MP4 and saved JSON with
+  a separate version error. An external save during export retained the newer
+  JSON and completed MP4, reporting that the submitted snapshot was not saved.
+- Pure regressions cover absolute frame rounding, zero-frame clip rejection,
+  actual rounded vertical warning boundaries, timestamp overflow, missing legacy
+  approved content, confined names, bounded progress parsing and cleanup of only
+  registered private workfiles while retaining unknown content.
+
+The baseline uses private temporary disk and a second H.264 encode. RF64 support
+was exercised with short fixtures; no multi-hour/over4GiB fixture was generated.
+No physical timing/drift, native export/player interaction, Windows CI, M7 inserts,
+YouTube or packaging acceptance is claimed here. Shared atomic publication's
+documented post-rename flush/power-loss caveats still apply. Root app integration
+and subsequent milestone verification remain separate from this core checkpoint.

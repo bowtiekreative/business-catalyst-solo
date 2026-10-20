@@ -209,3 +209,47 @@ The card worker uses one-job/one-result bounded channels. Font shaping, image
 preparation and rasterization stay off painting. Assets are reused until the
 project/image set changes. Project epochs reject late frames. The app uploads
 straight RGBA without another layout path. Reduced motion invalidates preview.
+
+## Sequence MP4 export · milestone 8
+
+`video_core::export::export_sequence` is an explicit blocking worker operation.
+It takes an immutable Studio snapshot, the ProjectStore baseline captured at job
+start, options, the existing Cancellation token and a progress callback. The UI
+forwards those values and preserves its newer-draft/save-ack guard. Export never
+reopens a fresh save baseline at job end or replaces an in-memory Editor.
+
+ExportPlan validates a nonempty sequence, approved content and cumulative30fps
+frame boundaries. Rounded absolute sequence boundaries avoid accumulated per-clip
+rounding; a clip shorter than one output frame is rejected explicitly. Horizontal
+1920×1080 and vertical1080×1920 outputs use H.264/yuv420p and AAC48kHz stereo. A
+vertical sequence over180s returns a typed warning without imposing a length cap.
+Removed cues do not play; a kind-only cue in the active sequence is an error.
+
+Each trimmed source is normalized into exact-frame video and exact-length stereo
+PCM in a new app-owned private work directory. Generated relative-name concat
+lists join these streams, and a final FFmpeg process combines them with streamed
+straight RGBA frames from the same renderer used for preview/timeline playback.
+Only one RGBA frame is held by the writer; pipe backpressure bounds buffering.
+At cue changes the worker explicitly prepares the active images, then rendering
+uses memory only. Long sequences do not need every image decoded simultaneously.
+Audio is encoded once into the final AAC track, avoiding accumulated AAC priming
+at clip joins. Intermediate WAV uses RF64 automatically when needed, avoiding
+the classic RIFF4GiB size limit on long interviews. The baseline normalizes video before final overlay encoding; this
+uses temporary disk and a second H.264 encode, a documented initial tradeoff.
+
+FFmpeg's actual `-progress` output drives monotonic phase progress. Protocol lines
+and diagnostics are bounded; cancellation/timeouts kill/reap the child and unblock
+and join its frame writer. Real output writes keep fast-start muxing alive but
+never become invented encoding percentages. A failed frame worker aborts the
+child. Temporary cleanup removes only registered generated files, retaining any
+unknown/linked files rather than recursively deleting them.
+
+Before publication, the final MP4 is probed for its codec, geometry,30fps, exact
+frame count and audio/video duration. Sources are checked again for ordinary
+changes. Shared PendingFile performs confined no-clobber/fsync publication inside
+exports/. Cancellation before publication leaves source media and existing
+exports intact. After publication, Save and Save version use the original store
+baseline and existing hardened local Git implementation. A save/version failure
+returns the valid MP4 plus explicit project_saved/version_error evidence; it does
+not delete the video or silently overwrite another window's project. An unchanged
+snapshot can reference its existing local version instead of an empty commit.

@@ -206,3 +206,35 @@ The raw frame contract is straight RGBA with zero color in transparent pixels.
 No video encoder, export write, AI provider, network client or upload is introduced
 by this renderer. Generated proof PNGs are an explicit unit-test-only option;
 they never appear as a real camera, user photo or approved project content.
+
+## Sequence export · milestone 8
+
+Export accepts a Studio snapshot and an optional normal MP4 filename leaf inside
+its project's exports/ folder. It accepts no UI shell/filter text, arbitrary
+output directory, URL, device or network destination. Explicit system FFmpeg and
+ffprobe receive fixed typed argument vectors and file/pipe protocol restrictions.
+Only generated safe relative filenames appear in private concat manifests.
+Source video and image paths reuse ProjectStore ownership and Catalyst confinement;
+links/nonregular files, ordinary source changes and output collisions fail.
+
+The snapshot and approved content pass existing validation/credential scans.
+No sequence cue is silently discarded for missing approved content, images,
+overflow or unsupported glyphs. All applicable images are checked before encoding;
+active-image cache preparation is explicit. Raw frame transport and diagnostics
+are bounded and jobs have cancel/stall/scaled processing timeouts. Actual source
+and completed video remain outside Git as required by the project ignore rules.
+
+The MP4's temporary path is app-generated. Publication never overwrites an
+existing export, even if a destination appears after preparation. Cleanup unlinks
+only registered generated private workfiles and attempts to remove an empty work
+directory; it never recursively deletes unknown files or project media. Existing
+filesystem race/post-rename flush/power-loss caveats still apply.
+
+After a valid MP4 is published, cancellation stops being available during the
+small local version step. ProjectStore saves against its original baseline,
+scans exact data and uses hardened local Git; it never pushes. Outside changes
+refuse the save while retaining the completed MP4 and newer draft. Git failure
+also preserves saved JSON and the MP4, and is reported separately from successful
+media creation. UI code must retain the submitted snapshot baseline on an ack,
+not overwrite newer edits with it. Export introduces no upload, inference or
+background network action.
