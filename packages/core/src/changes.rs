@@ -2,7 +2,6 @@ use crate::{Project, Result, check_secrets, project::MAX_TEXT};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -156,24 +155,7 @@ impl Project {
     }
 
     fn private_dir(&self, create: bool) -> Result<PathBuf> {
-        let mut dir = self.root.clone();
-        for part in [".catalyst", "private"] {
-            dir.push(part);
-            if dir.exists() || fs::symlink_metadata(&dir).is_ok() {
-                let meta = fs::symlink_metadata(&dir)?;
-                if meta.file_type().is_symlink() || !meta.is_dir() {
-                    return Err("Private history must be a normal directory".into());
-                }
-            } else if create {
-                fs::create_dir(&dir)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
-                }
-            }
-        }
-        Ok(dir)
+        crate::local::private_dir(&self.root, crate::local::PrivateNamespace::Catalyst, create)
     }
 
     fn scan_tracked_secrets(&self) -> Result<()> {
@@ -209,15 +191,7 @@ impl Project {
 }
 
 fn atomic_write(path: &Path, text: &str) -> Result<()> {
-    let mut temp = tempfile::NamedTempFile::new_in(path.parent().ok_or("Missing parent folder")?)?;
-    temp.write_all(text.as_bytes())?;
-    temp.as_file().sync_all()?;
-    if path.exists() {
-        temp.as_file()
-            .set_permissions(fs::metadata(path)?.permissions())?;
-    }
-    temp.persist(path)?;
-    Ok(())
+    crate::local::atomic_write(path, text.as_bytes(), crate::local::WriteExpected::Any)
 }
 
 struct Lock {

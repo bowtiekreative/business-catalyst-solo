@@ -63,3 +63,66 @@
 - Packaging, live camera timing/audio drift, renderer parity, local AI quality,
   OAuth client creation, real uploads and Windows interactive accessibility are
   later acceptance work. No milestone beyond the foundation is claimed here.
+
+## Sidebar Video core · milestone 2
+
+- Add the serializable document, timeline operations, 100-snapshot in-memory
+  undo/redo, local project store and local Git versions. Keep device/renderer/AI
+  work out of this milestone. Native UI integration is a separately verified
+  coordinator responsibility.
+- Retain the milestone 1 settings/slot API. New UI edits use `Editor::apply` or
+  `apply_batch`; a batch publishes one validated candidate and one undo step.
+  Separate monotonic IDs per type permit constructing dependent media/clip/cue
+  additions as a single batch. High-water counters survive undo, so undoing an
+  addition can still leave a metadata change requiring Save.
+- Include clip names. Cue offsets are milliseconds into the clip; trims use
+  source timestamps. Split-boundary cues belong to the right half at zero.
+  Clamp both cue offset and duration after split/trim. Cue type is captured when
+  fired so later slot-kind edits do not silently change it. An immutable rendered
+  definition/content reference is explicitly deferred to milestone 5.
+- Frame nudges round the absolute frame index at 30 fps, producing 33/34 ms
+  increments without cumulative drift. Seconds remain exactly 1000 ms. Reject
+  edits that remove the entire clip or exceed its media source.
+- Do not impose a 24-hour source or seven-day sequence cap. Those limits have
+  no tool requirement. Use checked `u64` arithmetic plus document/item resource
+  bounds (8 MiB JSON, 10000 media/clips, 100000 cues).
+- `project.json` contains the whole authoritative document; nine slot JSON files
+  are derived Git mirrors. This avoids a partially saved multi-file document.
+  Publish mirrors first, project last; load the project alone. Future immutable
+  overlay definitions require an equally explicit publication/recovery contract.
+- Extract and generalize the existing Catalyst local primitives, rather than
+  duplicate them. Explicit policies preserve website exclusions, add checked new
+  JSON leaves and a narrow `.gitignore` exception, and choose the fixed private
+  namespace. Reuse the same atomic writer and hardened Git command builder.
+  Add expected-byte verification, Unix parent-directory fsync and OS advisory
+  locks using the already cached `fs2` crate. All eight existing Catalyst workflow
+  tests remain required regression coverage.
+- Stable Rust's Windows metadata link-count API remains
+  [experimental](https://doc.rust-lang.org/std/os/windows/fs/trait.MetadataExt.html#tymethod.number_of_links).
+  Reuse the already cached WinAPI dependency for the small open-file link-count
+  query, with explicit safety comments. Windows execution remains unverified.
+- Project creation uses a new folder only; `create_in` derives a unique child of
+  a selected parent. Git identity is app-owned local metadata (`Storyfold`,
+  `local@storyfold.invalid`), not a change to the user's global configuration.
+  Disable init templates. Save version commits exact known data paths and never
+  stages an unknown file simply because it sits under `overlays/`.
+- OS locks release on crash and leave an inert ignored file. Do not offer stale
+  lock deletion. Outside data/HEAD changes require reopen/reconciliation, not a
+  force overwrite. A Git failure after Save preserves JSON and reports the failed
+  version separately. Save acknowledgments never replace an Editor.
+- Media import/copy is not part of this core milestone. Existing source paths
+  must resolve to regular owned files. The next import/capture API must make file
+  creation atomic and explicit; no fake sources are introduced in the normal UI.
+
+## Sidebar Video timeline UI
+
+- File dialogs, safe project writes and local Git versions run on a named worker
+  thread. A save acknowledgment updates the submitted baseline; it never replaces
+  edits made while saving. New/Open block edits while loading and guard unsaved
+  drafts. Failed or cancelled operations keep the current draft.
+- Bin and sequence draw the same core clip list. Drag and Move left/right forward
+  core edits; split resolves global playhead time in the core. Trim nudges are
+  immediate core actions, with typed in/out fields applied explicitly.
+- Use the existing cached rfd0.17 native folder picker with the XDG portal backend.
+  Creating/saving a draft selects a parent and the core reserves a unique new
+  project child; no existing folder is reinitialized.

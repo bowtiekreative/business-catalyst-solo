@@ -1,5 +1,6 @@
 mod changes;
 mod demo;
+pub mod local;
 pub mod model;
 mod project;
 mod scan;

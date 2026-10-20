@@ -85,3 +85,71 @@ this foundation. Real device timing/audio, timeline/save invariants, renderer
 parity, model capability, OAuth/upload, installer and screen-reader acceptance
 remain unverified later milestones. Ubuntu/Windows CI has not been run for these
 new members yet.
+
+## Sidebar Video milestone 2 core · 2026-10-19
+
+Verified with the existing project-local Rust 1.99.1 toolchain and cached crates:
+
+- `cargo fmt -p catalyst-core -p video-core -- --check`: passed.
+- `cargo test -p catalyst-core -p video-core --locked --offline`: all **31** tests
+  passed (3 shared local-helper tests, all 8 original Catalyst workflow tests,
+  and 20 video model/timeline/store tests).
+- `cargo clippy -p catalyst-core -p video-core --all-targets --locked --offline -- -D warnings`:
+  passed.
+- `git diff --check`: passed at the core checkpoint.
+
+Regression evidence covers every supplied timeline invariant: moving retains
+clip-relative cues; splitting remaps boundary/later cues and clamps crossing
+durations; trimming remaps/clamps offsets and durations; removal retains source
+files and cues; exact sequence-time sums; save/load equality; and old JSON
+remaining valid when save publication is interrupted. It also checks grouped
+atomic edits, failed/no-op edits, 100-step undo/redo bounds, redo invalidation,
+identity high-water marks, absolute 30 fps frame nudges, exact second nudges,
+global-playhead split, unknown fields, invalid identities/references/slots,
+oversized/credential-like input, long source durations and integer overflow.
+
+The local persistence tests create real disposable Git repositories. They verify
+new-folder-only initialization, tracked metadata/ignored media and private data,
+local version commits, no remotes, source-file preservation, two stale windows,
+outside mirror changes, advisory lock exclusion, failed commit preserving saved
+JSON, unknown secret-bearing files staying untracked/untouched, and preexisting
+staging remaining untouched. Unix symlink/hardlink boundaries and private folder
+permissions are exercised. A real child process exits abruptly after temporary
+data fsync but before rename; its parent verifies the previous JSON bytes and
+successful reacquisition of the OS-released save lock. Another test fails actual
+project publication after mirror preparation, opens the old authoritative JSON,
+then restores permission and retries successfully.
+
+This is focused core evidence. The concurrently developed milestone 3 UI,
+workspace-wide build and native interactions are verified separately by the
+coordinator. No physical capture, inference, network, export or upload was run.
+Windows link-count/locking behavior, platform CI and hardware/filesystem power
+failure recovery have not been exercised on this workstation. These results do
+not declare the full native recording application complete.
+
+## Sidebar Video milestone 3 timeline UI · 2026-10-19
+
+The egui studio now forwards project, timeline, shape and history actions to
+video-core. The installed Dioxus recorder is still available during capture
+migration. This checkpoint does not claim continuous capture or overlay playback.
+
+Actually run in the Catalyst Solo workspace with its local Rust toolchain:
+
+- `cargo test --workspace --all-features --locked --offline`:38 tests passed,
+  including the original Catalyst workflows,20 video-core tests and6 studio tests.
+- `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings`:passed.
+- `cargo build --workspace --all-features --locked --offline`:passed.
+- After native layout corrections, the affected6 studio tests and native build
+  passed again. Real Xvfb launches exited0 at1480×1000 and1160×800; generated
+  clip metadata only, no device or private media opened. The minimum portrait
+  screenshot was inspected after44px targets, selected-text contrast, full-width
+  playhead and compact information rows were corrected.
+- UI tests check the save-ack/newer-draft race, loading guards, unsaved-name
+  navigation guard, sequence operations/history and AccessKit Record bounds.
+
+Screenshot harness: build `sidebar-video --all-features`, set
+`SIDEBAR_VIDEO_VALIDATION_TIMELINE=1` with `EFRAME_SCREENSHOT_TO`, optionally
+`SIDEBAR_VIDEO_VALIDATION_MIN=1`, and launch under `xvfb-run` as above. Outputs
+are ignored `data/sidebar-video-timeline/`. Normal builds do not inject fixtures.
+Native folder-picker interaction, physical device capture, screen-reader use,
+Windows compilation and the remaining specification milestones are unverified.

@@ -66,3 +66,66 @@ separate local process, so it must remain explicit when implemented.
 The optional `validation-screenshot` feature enables eframe's existing
 `EFRAME_SCREENSHOT_TO` validation output. Only an explicit test launch supplies
 that path; it is not a project-save feature and normal builds do not enable it.
+
+## Sidebar Video persisted core · milestone 2
+
+`Studio::from_json` denies unknown fields and validates schema version, bounded
+item counts, 8 MiB JSON size, positive typed identities, references, unique media
+paths, clip/source bounds, nine ordered slots and cue bounds. Durations have no
+arbitrary interview-length cap; checked `u64` millisecond arithmetic rejects
+overflow. `Studio::to_json` validates again and runs the shared credential scan.
+Use these boundary methods rather than treating unchecked serde output as a
+validated project. Media metadata does not prove codec or measured duration;
+future capture/import must probe that information.
+
+Project paths must be portable normal relative components under `media/`.
+Traversal, dot components, backslashes, Windows device names and nonportable
+filename characters are rejected. Existing file/parent checks reject symlinks
+and hardlinks. Windows hardlink checks query Win32's open-file information;
+that target has not been run locally. Private folders use Unix 0700 and temporary
+files use private default permissions. Windows retains inherited ACLs.
+
+The reviewed public helper extension is `catalyst_core::local`. Website reads
+retain their old generated/dot-name and extension policy. Video's explicit
+project policy allows JSON and new file leaves only under checked parents;
+the separate metadata policy permits only the known root `.gitignore`.
+Private namespaces are a fixed enum, not arbitrary hidden paths. Atomic writes
+require caller confinement and recheck expected bytes just before publication.
+The helper's raw path interface must not be exposed as arbitrary UI writes.
+
+Save locks are OS advisory locks in `.sidebar/private/save.lock`, released when
+the process exits, including abrupt exit. The inert ignored file is retained;
+deleting it to force access can create competing lock ownership and is unsafe.
+Same-directory temporary writes are file-synced before rename; Unix directory
+metadata is synced after rename. Mirrors prepare first and the complete
+`project.json` publishes last. Failure before publication leaves the old project
+loadable. A crash can leave an ignored lock file or temporary/derived files;
+these are not evidence that the authoritative project was replaced.
+
+Stores compare the last loaded/saved bytes and Git HEAD under the lock. Outside
+changes refuse a save without replacing the in-memory draft. These checks protect
+cooperating app windows and ordinary stale saves; they are not an OS sandbox
+against a hostile local process swapping a path between check and rename. A
+post-rename filesystem flush failure may leave a complete new file despite an
+error; retain the draft and inspect/reopen rather than assume no file changed.
+
+Only a newly app-created folder is Git-initialized. Existing projects must own a
+normal repository with the expected 11 data files tracked, media/private paths
+ignored and no Git attributes or pre-staged changes. Git uses argument vectors,
+disables hooks/fsmonitor/signing/global attributes, clears inherited repository,
+index/object and config-injection redirects, and never accepts UI shell commands.
+Only the 11 exact data paths are staged; unknown overlay files stay untouched and
+untracked. Before each commit, exact project/overlay data and its summary pass
+the shared credential scanner. No remotes or pushes are created.
+
+Timeline deletion never unlinks source files. Save-version commit failure keeps
+latest valid saved JSON; its error explicitly distinguishes saved edits from a
+failed local version. UI integration must keep newer edits when a worker returns
+a save acknowledgment. No capture, inference, network, export or upload client is
+introduced by milestone 2.
+
+The studio folder picker passes explicit local paths to video-core. Project and
+Git errors keep the in-memory draft. New/Open cannot overwrite concurrent draft
+edits while loading; Save can run during edits and acknowledges only its snapshot.
+All source writes and commits continue through the core's confinement and secret
+checks. The studio exposes no shell text field or automatic push.

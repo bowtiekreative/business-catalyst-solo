@@ -1,8 +1,8 @@
 use regex::Regex;
 use std::{
     fs,
-    path::{Component, Path, PathBuf},
-    process::{Command, Output},
+    path::{Path, PathBuf},
+    process::Output,
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -27,30 +27,12 @@ impl Project {
     }
 
     pub(crate) fn file(&self, relative: &str) -> Result<PathBuf> {
-        if relative.contains('\\') || relative.is_empty() {
-            return Err("Invalid file path".into());
-        }
-        let mut target = self.root.clone();
-        for part in Path::new(relative).components() {
-            let Component::Normal(name) = part else {
-                return Err("File must stay inside the website folder".into());
-            };
-            if excluded(&name.to_string_lossy()) {
-                return Err("This folder is private or generated".into());
-            }
-            target.push(name);
-            let meta = fs::symlink_metadata(&target)?;
-            if meta.file_type().is_symlink() {
-                return Err("Linked files are read-only".into());
-            }
-        }
-        if !target.canonicalize()?.starts_with(&self.root) {
-            return Err("File is outside the website folder".into());
-        }
-        if !target.is_file() {
-            return Err("Choose a source file".into());
-        }
-        Ok(target)
+        crate::local::confined_file(
+            &self.root,
+            relative,
+            crate::local::PathPolicy::Website,
+            crate::local::FileMode::Existing,
+        )
     }
 
     pub fn read_source(&self, relative: &str) -> Result<String> {
@@ -67,22 +49,7 @@ impl Project {
     }
 
     pub(crate) fn git_output(&self, args: &[&str]) -> Result<Output> {
-        Ok(Command::new("git")
-            .current_dir(&self.root)
-            .args([
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "core.attributesFile=/dev/null",
-            ])
-            .env("GIT_ATTR_NOSYSTEM", "1")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .args(args)
-            .output()?)
+        crate::local::hardened_git(&self.root, args)
     }
 
     pub(crate) fn git(&self, args: &[&str]) -> Result<String> {

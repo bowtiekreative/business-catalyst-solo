@@ -48,3 +48,45 @@ and local AI clients in `video-core`, with worker-thread channels to the UI when
 needed. They must add their own invariant and integration evidence. The existing
 Storyfold Dioxus application remains the working product until feature parity;
 this foundation is a separate executable and is not installed over it.
+
+## Sidebar Video project core · milestone 2
+
+`video-core` now owns a versioned serde project document, stable media/clip/cue
+identities, one ordered active clip list, a Removed list, and clip-relative cue
+timing. `Editor` applies typed operations to a validated candidate, publishes a
+successful batch as one edit, and retains at most 100 prior snapshots plus redo
+in memory. Failed/no-op edits add no undo step. IDs keep their high-water marks
+through undo, so a new branch does not reuse the identity of an undone clip.
+
+Moving clips carries their cues. Splitting remaps boundary/later cues into the
+new right clip; crossing cue durations clamp to the left end. Trimming preserves
+cue source positions before clamping offset and duration into the new clip.
+Removing a clip retains its source metadata and cues; restoring selects its new
+sequence position. Sequence-time lookup and global-playhead split are core
+operations. Frame nudges use the absolute 30 fps grid; second nudges are exact.
+
+`ProjectStore` creates only new folders, or opens an existing owned project
+without initializing or reconfiguring its repository. Projects contain
+`project.json`, nine `overlays/slot-N.json` mirrors, `media/`, `buffer/`, `exports/`
+and `.sidebar/private/`. `project.json` is the authoritative complete snapshot;
+overlay mirrors are derived tracked data. Loading never mixes newly prepared
+mirrors with an older authoritative project after an interrupted save.
+
+Save uses an OS advisory lock, expected-byte comparisons and atomic publication.
+The store acknowledges only the submitted snapshot; it does not replace an
+Editor or newer in-memory draft. `is_dirty` compares against that acknowledged
+snapshot. Save version first saves valid JSON, then creates a scoped local Git
+commit. Commit failure preserves the latest saved project and reports that
+version creation failed. Ordinary Save does not commit or push.
+
+Shared `catalyst_core::local` extracts confinement, private-folder creation,
+atomic replacement and hardened Git primitives. Existing Catalyst wrappers use
+the shared implementations with their existing website policy. Video uses an
+explicit project policy, fixed Sidebar private namespace and existing owned
+media references. Import/capture, immutable rendered overlay definitions,
+renderer, inference, export, upload and packaging remain separate milestones.
+
+The native studio UI (`apps/sidebar-video/src/workspace.rs`) owns only its Editor,
+view state and an acknowledged save snapshot. ProjectStore is used on worker
+threads for New/Open/Save/Save version. The UI forwards typed domain edits; it
+contains no second timeline model or external command interface.
