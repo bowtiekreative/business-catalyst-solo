@@ -253,3 +253,23 @@ baseline and existing hardened local Git implementation. A save/version failure
 returns the valid MP4 plus explicit project_saved/version_error evidence; it does
 not delete the video or silently overwrite another window's project. An unchanged
 snapshot can reference its existing local version instead of an empty commit.
+
+
+### Native export controller and sequence player
+
+The egui Output controller snapshots the Editor and immediately displays progress
+before starting a worker. It serializes store operations with New/Open/Save while
+allowing timeline edits. Only the submitted snapshot is acknowledged after an
+export; a newer draft is never overwritten or marked clean. Reduced-motion changes
+also invalidate an automatic preview. Preview reuses only an exact current
+snapshot/motion match; Export always builds a new confined artifact. Cancellation
+is available until atomic publication. A saved MP4 remains available if local Git
+versioning fails, and that separate error is visible.
+
+Sequence playback opens the actual rendered MP4 in a separate native FFplay
+window, with fixed typed arguments and only a confined project exports/*.mp4 path.
+It uses Space, arrows, F/double click and Escape for playback, seek, fullscreen and
+close. This is distinct from the live camera stage; it is not an embedded egui
+sequence decoder. The controller starts/reaps players off painting, rejects stale
+project results and exposes errors instead of leaving a blank stage. The export
+folder opener also runs off-thread, with bounded waiting and visible failures.

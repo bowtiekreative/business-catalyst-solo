@@ -363,3 +363,24 @@ No physical timing/drift, native export/player interaction, Windows CI, M7 inser
 YouTube or packaging acceptance is claimed here. Shared atomic publication's
 documented post-rename flush/power-loss caveats still apply. Root app integration
 and subsequent milestone verification remain separate from this core checkpoint.
+
+
+## Native preview/export controls — 2026-10-20 (Edmonton)
+
+- App all-feature unit/UI suite: **11 passed,2 opt-in generated checks ignored**.
+  New checks verify that export acknowledgement retains newer edits, a changed
+  reduced-motion setting prevents stale automatic playback, and worker loss
+  clears loading without falsely acknowledging a save.
+- Explicit `generated_sequence_controls_cache_cancel_and_preserve_newer_edits`
+  under Xvfb passed in10.61seconds. The test generated local H.264/AAC sources,
+  rendered a two-clip sequence with a quote, opened the actual muted FFplay window,
+  reused an unchanged preview, rebuilt after a trim, and canceled without leaving
+  a final MP4. Source bytes and edits made during export were preserved. No
+  physical camera, microphone, private recording, network or account was used.
+- Native playback path checks reject URLs, traversal, missing files and links
+  before launching a player. Rendering, player startup and folder opening stay
+  off paint; progress comes from the core encoder rather than a timer.
+
+This establishes generated native controller/player interaction. Physical camera
+quality, timing/drift/unplug, local AI, M7 inserts, keychain publishing, packaging
+and Windows acceptance remain separate. The installed Dioxus app is preserved.

@@ -3,6 +3,7 @@
 pub mod capture;
 pub mod export;
 pub mod media;
+pub mod playback;
 mod model;
 mod overlay;
 pub mod renderer;

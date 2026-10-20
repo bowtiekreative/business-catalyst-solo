@@ -1,7 +1,9 @@
 //! Storyfold native Record studio. UI forwards edits to video-core.
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, Vec2};
 mod capture;
+mod output;
 mod overlays;
+use output::{Action, OutputUi};
 use overlays::OverlaysUi;
 mod workspace;
 use capture::CaptureUi;
@@ -132,6 +134,7 @@ struct SidebarVideo {
     project: Workspace,
     capture: CaptureUi,
     cards: OverlaysUi,
+    output: OutputUi,
     name_draft: String,
     selected: Option<ClipId>,
     playhead_ms: u64,
@@ -230,51 +233,146 @@ impl SidebarVideo {
         self.sanitize_view();
     }
     fn header(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("sidebar_header").exact_height(112.)
-            .frame(egui::Frame::new().fill(SURFACE).inner_margin(egui::Margin::symmetric(20, 12)))
+        egui::TopBottomPanel::top("sidebar_header")
+            .exact_height(112.)
+            .frame(
+                egui::Frame::new()
+                    .fill(SURFACE)
+                    .inner_margin(egui::Margin::symmetric(20, 12)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.vertical(|ui| { ui.set_width(126.); ui.label(strong("Storyfold",24.).color(INK)); hint(ui,"RECORD STUDIO"); });
+                    ui.vertical(|ui| {
+                        ui.set_width(126.);
+                        ui.label(strong("Storyfold", 24.).color(INK));
+                        hint(ui, "RECORD STUDIO");
+                    });
                     let mut intent = None;
                     let mut save = None;
                     ui.add_enabled_ui(!self.project.busy(), |ui| {
                         ui.menu_button("Project", |ui| {
-                            if ui.button("New project…").clicked() { intent=Some(Intent::New); ui.close(); }
-                            if ui.button("Open project…").clicked() { intent=Some(Intent::Open); ui.close(); }
-                            if ui.add_enabled(self.capture.can_leave() && self.project.store().is_some(),egui::Button::new("Recover interrupted recordings…")).clicked() { self.capture.find_recovery(&self.project,ctx); ui.close(); }
+                            if ui.button("New project…").clicked() {
+                                intent = Some(Intent::New);
+                                ui.close();
+                            }
+                            if ui.button("Open project…").clicked() {
+                                intent = Some(Intent::Open);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(
+                                    self.capture.can_leave() && self.project.store().is_some(),
+                                    egui::Button::new("Recover interrupted recordings…"),
+                                )
+                                .clicked()
+                            {
+                                self.capture.find_recovery(&self.project, ctx);
+                                ui.close();
+                            }
                             ui.separator();
-                            if ui.button("Save    Ctrl+S").clicked() { save=Some(false); ui.close(); }
-                            if ui.button("Save version…    Ctrl+Shift+S").clicked() { save=Some(true); ui.close(); }
-                        });
-                    });
-                    if let Some(intent)=intent { self.request(intent,ctx); }
-                    if let Some(version)=save { self.save(ctx,version); }
-                    if ui.button(if self.capture.camera_running(){"Camera on"}else{"Camera…"}).clicked() { self.capture.show_settings=true; if self.capture.devices.is_none(){self.capture.refresh(ctx);} }
-                    ui.add_enabled_ui(!self.project.loading(), |ui| {
-                        ui.vertical(|ui| {
-                            ui.set_width(220.);
-                            let label=ui.label(RichText::new(if self.dirty() { "Recording name · unsaved" } else { "Recording name" }).size(11.).color(MUTED));
-                            let response=ui.add_sized([220.,44.],egui::TextEdit::singleline(&mut self.name_draft).char_limit(120).hint_text("Untitled recording"));
-                            let commit=response.lost_focus() || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                            response.labelled_by(label.id);
-                            if commit { self.flush_name(); }
-                        });
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        pending(ui,"Export MP4","MP4 export will be connected after native capture and overlay rendering.");
-                        ui.add_enabled_ui(!self.project.loading() && self.capture.can_leave(), |ui| {
-                            for orientation in [Orientation::Vertical,Orientation::Horizontal] {
-                                let selected=self.project.studio().orientation()==orientation;
-                                let mut button=egui::Button::new(strong(orientation.label(),13.).color(if selected {CARD} else {BODY})).min_size(egui::vec2(152.,44.));
-                                if selected { button=button.fill(ACCENT); }
-                                if ui.add(button).clicked() { self.edit(Edit::SetOrientation(orientation)); }
+                            if ui.button("Save    Ctrl+S").clicked() {
+                                save = Some(false);
+                                ui.close();
+                            }
+                            if ui.button("Save version…    Ctrl+Shift+S").clicked() {
+                                save = Some(true);
+                                ui.close();
                             }
                         });
                     });
+                    if let Some(intent) = intent {
+                        self.request(intent, ctx);
+                    }
+                    if let Some(version) = save {
+                        self.save(ctx, version);
+                    }
+                    if ui
+                        .button(if self.capture.camera_running() {
+                            "Camera on"
+                        } else {
+                            "Camera…"
+                        })
+                        .clicked()
+                    {
+                        self.capture.show_settings = true;
+                        if self.capture.devices.is_none() {
+                            self.capture.refresh(ctx);
+                        }
+                    }
+                    ui.add_enabled_ui(!self.project.loading(), |ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(220.);
+                            let label = ui.label(
+                                RichText::new(if self.dirty() {
+                                    "Recording name · unsaved"
+                                } else {
+                                    "Recording name"
+                                })
+                                .size(11.)
+                                .color(MUTED),
+                            );
+                            let response = ui.add_sized(
+                                [220., 44.],
+                                egui::TextEdit::singleline(&mut self.name_draft)
+                                    .char_limit(120)
+                                    .hint_text("Untitled recording"),
+                            );
+                            let commit = response.lost_focus()
+                                || (response.has_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                            response.labelled_by(label.id);
+                            if commit {
+                                self.flush_name();
+                            }
+                        });
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.output_button(ui, Action::Export);
+                        ui.add_enabled_ui(
+                            !self.project.loading() && self.capture.can_leave(),
+                            |ui| {
+                                for orientation in [Orientation::Vertical, Orientation::Horizontal]
+                                {
+                                    let selected =
+                                        self.project.studio().orientation() == orientation;
+                                    let mut button = egui::Button::new(
+                                        strong(orientation.label(), 13.).color(if selected {
+                                            CARD
+                                        } else {
+                                            BODY
+                                        }),
+                                    )
+                                    .min_size(egui::vec2(152., 44.));
+                                    if selected {
+                                        button = button.fill(ACCENT);
+                                    }
+                                    if ui.add(button).clicked() {
+                                        self.edit(Edit::SetOrientation(orientation));
+                                    }
+                                }
+                            },
+                        );
+                    });
                 });
-                let status=self.project.error.as_deref().unwrap_or(&self.project.status);
-                let label=ui.add(egui::Label::new(RichText::new(status).size(12.).color(if self.project.error.is_some() { INK } else { BODY })).truncate());
-                label.on_hover_text(self.project.folder.as_ref().map_or_else(|| status.to_owned(), |p| format!("{status}\n{}",p.display())));
+                let status = self
+                    .project
+                    .error
+                    .as_deref()
+                    .unwrap_or(&self.project.status);
+                let label = ui.add(
+                    egui::Label::new(RichText::new(status).size(12.).color(
+                        if self.project.error.is_some() {
+                            INK
+                        } else {
+                            BODY
+                        },
+                    ))
+                    .truncate(),
+                );
+                label.on_hover_text(self.project.folder.as_ref().map_or_else(
+                    || status.to_owned(),
+                    |p| format!("{status}\n{}", p.display()),
+                ));
             });
     }
     fn clip_button(
@@ -375,6 +473,34 @@ impl SidebarVideo {
             pending(ui,"Build with local AI","The local AI overlay builder is being connected.");
             if let Some(error)=&self.cards.error{ui.colored_label(Color32::from_rgb(160,30,45),error);}
         });
+    }
+    fn output_button(&mut self, ui: &mut egui::Ui, action: Action) {
+        let label = if matches!(action, Action::Preview) {
+            "Preview sequence"
+        } else {
+            "Export MP4"
+        };
+        if ui
+            .add_enabled(
+                !self.project.busy()
+                    && self.capture.can_leave()
+                    && !self.project.studio().clips().is_empty(),
+                egui::Button::new(label).min_size(egui::vec2(44., 44.)),
+            )
+            .on_disabled_hover_text(
+                "Save a project, add clips and stop the camera before preparing the sequence.",
+            )
+            .clicked()
+            && self.flush_name()
+        {
+            self.output.request(
+                action,
+                &mut self.project,
+                &self.capture,
+                ui.ctx(),
+                self.cards.reduced_motion,
+            );
+        }
     }
     fn stage(&mut self, ui: &mut egui::Ui) {
         let geometry = self.project.studio().orientation().output_size();
@@ -548,6 +674,7 @@ impl SidebarVideo {
                             {
                                 self.history(false);
                             }
+                            self.output_button(ui, Action::Preview);
                         });
                     });
                     ui.add_enabled_ui(!self.project.loading(), |ui| {
@@ -834,11 +961,14 @@ impl SidebarVideo {
     }
     fn show(&mut self, ctx: &egui::Context) {
         if self.project.poll(ctx) {
+            self.output.reset();
             self.name_draft = self.project.studio().name().into();
             self.selected = None;
             self.playhead_ms = 0;
             self.show_removed = false;
         }
+        self.output
+            .poll(&mut self.project, ctx, self.cards.reduced_motion);
         if let Some(clip) = self.capture.poll(&mut self.project, ctx) {
             self.select(clip);
         }
@@ -876,6 +1006,7 @@ impl SidebarVideo {
         self.cards.dialog(&mut self.project, ctx);
         self.capture.settings_dialog(&self.project, ctx);
         self.capture.recovery_dialog(&self.project, ctx);
+        self.output.banner(&self.project, ctx);
     }
 }
 fn timecode(ms: u64) -> String {

@@ -99,8 +99,15 @@ Edit one of nine cards, add exact text/image and highlights, then **Approve**.
 Later slot edits retain existing cue content. Project saves and local versions
 use confined atomic writes; nothing auto-pushes.
 
-Native sequence export/playback, local AI, inserts, publishing and packaging are
-still being connected. The working Dioxus Storyfold application continues until
+**Preview sequence** renders the current edits and opens the resulting MP4 in
+a native player. Space pauses, arrows seek, F or a double click expands it, and
+Escape closes the player. **Export MP4** writes into the project's `exports/`
+folder, shows actual encoding progress and permits cancellation before publication.
+**Open export folder** reveals the result. Exports save the submitted snapshot
+and a local Git version; edits made during rendering remain an unsaved draft.
+
+Local AI, inserts, publishing and packaging are still being connected.
+The working Dioxus Storyfold application continues until
 this studio reaches feature parity. See docs/VALIDATION.md for checks actually run;
 physical-camera timing/drift and Windows acceptance are not established.
 

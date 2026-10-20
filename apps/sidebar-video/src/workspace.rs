@@ -37,6 +37,7 @@ pub struct Workspace {
     store: Option<Store>,
     pub folder: Option<PathBuf>,
     pending: Option<Pending>,
+    output_busy: bool,
     pub status: String,
     pub error: Option<String>,
 }
@@ -49,6 +50,7 @@ impl Default for Workspace {
             store: None,
             folder: None,
             pending: None,
+            output_busy: false,
             status: "Create a project or open a project folder to begin.".into(),
             error: None,
         }
@@ -75,7 +77,13 @@ impl Workspace {
         self.studio() != &self.baseline
     }
     pub fn busy(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.output_busy
+    }
+    pub fn set_output_busy(&mut self, busy: bool) {
+        self.output_busy = busy;
+    }
+    pub fn acknowledge_snapshot(&mut self, snapshot: Studio) {
+        self.baseline = snapshot;
     }
     pub fn loading(&self) -> bool {
         self.pending.as_ref().is_some_and(|p| p.loading)
