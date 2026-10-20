@@ -38,6 +38,7 @@ pub struct Workspace {
     pub folder: Option<PathBuf>,
     pending: Option<Pending>,
     output_busy: bool,
+    folder_dialog: rfd::FileDialog,
     pub status: String,
     pub error: Option<String>,
 }
@@ -51,12 +52,16 @@ impl Default for Workspace {
             folder: None,
             pending: None,
             output_busy: false,
+            folder_dialog: rfd::FileDialog::new(),
             status: "Create a project or open a project folder to begin.".into(),
             error: None,
         }
     }
 }
 impl Workspace {
+    pub fn set_folder_dialog(&mut self, dialog: rfd::FileDialog) {
+        self.folder_dialog = dialog;
+    }
     #[cfg(all(test, feature = "capture-test", target_os = "linux"))]
     pub fn test_project(path: &std::path::Path) -> Self {
         let (store, studio) = ProjectStore::create(path, "Generated UI check").unwrap();
@@ -119,12 +124,13 @@ impl Workspace {
         }
     }
     pub fn new_project(&mut self, ctx: &egui::Context) {
+        let dialog = self.folder_dialog.clone();
         self.start(
             ctx,
             true,
             "Choose a parent folder for the new project…",
-            || {
-                let Some(parent) = rfd::FileDialog::new()
+            move || {
+                let Some(parent) = dialog
                     .set_title("New Storyfold project — choose a parent folder")
                     .pick_folder()
                 else {
@@ -141,31 +147,38 @@ impl Workspace {
         );
     }
     pub fn open_project(&mut self, ctx: &egui::Context) {
-        self.start(ctx, true, "Choose a Storyfold project folder…", || {
-            let Some(folder) = rfd::FileDialog::new()
-                .set_title("Open Storyfold project folder")
-                .pick_folder()
-            else {
-                return Message::Cancelled;
-            };
-            match ProjectStore::open(folder) {
-                Ok((store, studio)) => Message::Opened {
-                    store: Arc::new(Mutex::new(store)),
-                    studio,
-                },
-                Err(error) => Message::Failed(error.to_string()),
-            }
-        });
+        let dialog = self.folder_dialog.clone();
+        self.start(
+            ctx,
+            true,
+            "Choose a Storyfold project folder…",
+            move || {
+                let Some(folder) = dialog
+                    .set_title("Open Storyfold project folder")
+                    .pick_folder()
+                else {
+                    return Message::Cancelled;
+                };
+                match ProjectStore::open(folder) {
+                    Ok((store, studio)) => Message::Opened {
+                        store: Arc::new(Mutex::new(store)),
+                        studio,
+                    },
+                    Err(error) => Message::Failed(error.to_string()),
+                }
+            },
+        );
     }
     pub fn save(&mut self, ctx: &egui::Context, summary: Option<String>) {
         let snapshot = self.studio().clone();
         let Some(store) = self.store.clone() else {
+            let dialog = self.folder_dialog.clone();
             self.start(
                 ctx,
                 false,
                 "Choose where to save this project…",
                 move || {
-                    let Some(parent) = rfd::FileDialog::new()
+                    let Some(parent) = dialog
                         .set_title("Save Storyfold project — choose a parent folder")
                         .pick_folder()
                     else {

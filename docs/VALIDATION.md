@@ -499,8 +499,8 @@ frame cue difference without relaxing the actual decoder frame-count bound.
 
 ## Native preview controls and YouTube integration · 2026-10-20
 
-The native player now uses system mpv with an always-visible controller. Real
-mouse input on a generated MP4 verified Play/Pause, a stopped clock while paused,
+The native player now uses system mpv with an always-visible controller. Controller mouse/button commands through local mpv IPC on a generated MP4
+verified Play/Pause, a stopped clock while paused,
 fullscreen enter/exit, Escape, staying open at EOF and Play restarting the clip.
 A compiled-in local Lua handler fixes replay after EOF. User configs/scripts,
 network extraction and sidecar discovery remain disabled. Source bytes stayed
@@ -554,3 +554,25 @@ User installation, manifest hashes and launcher validation passed. The installed
 app was launched with version0.1.1in its title; older windows were left intact.
 The bundled tool passed its restrictive help/version checks. Fresh-OS install,
 physical timing, Windows/macOS and real Google/keychain acceptance remain open.
+
+
+## Native startup/input follow-up0.1.2 · 2026-10-20
+
+The user reports that0.1.1ignores all studio clicks. This remains an open real-
+desktop acceptance failure. A validation-only, opt-in Input check logs at most100
+count/state records without keys, paths, content or screenshots. It never forces
+repaint. Its actual-desktop Project-click result is pending.
+
+The new scripts/test-record-native-input.py launches only an owned app fixture
+under fresh xvfb-run authority, waits for its viewable X11 window, focuses it and
+sends real OS pointer events at its own measured Project bounds. The app receives
+these events and opens Project. It passed with0.1.1and0.1.2; this is stronger than
+injected egui-context events, but does not prove the actual GNOME desktop case.
+
+Version0.1.2 also fixes confirmed startup UX problems: prominent Create/Open
+actions, an inactive grey Record button and rfd project folder pickers parented
+to the studio window. The two-shape/minimum-layout test verifies startup controls
+fit above Record. All23studio tests and strict app Clippy passed; installer tests,
+normal release build, package extraction/startup and installed hash verification
+passed. No hardware, private project, keychain or Google action was performed.
+Desktop input, actual picker foreground behavior and physical timing remain open.

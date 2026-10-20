@@ -163,7 +163,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/sidebar-video')
     parser.add_argument('--output', type=Path, default=ROOT / 'dist')
-    parser.add_argument('--version', default='0.1.1')
+    parser.add_argument('--version', default='0.1.2')
     parser.add_argument('--install-user', action='store_true')
     args = parser.parse_args()
     regular(args.binary, allow_hardlinks=True)

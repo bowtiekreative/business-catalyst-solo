@@ -2,6 +2,8 @@
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, Vec2};
 mod ai;
 mod capture;
+#[cfg(feature = "validation-screenshot")]
+mod input_probe;
 mod inserts;
 mod output;
 mod overlays;
@@ -250,11 +252,15 @@ impl SidebarVideo {
                         ui.set_width(126.);
                         ui.label(strong("Storyfold", 24.).color(INK));
                         hint(ui, "RECORD STUDIO");
+                        #[cfg(feature = "validation-screenshot")]
+                        if input_probe::enabled() {
+                            ui.label(RichText::new("Input check").size(12.).color(ACCENT));
+                        }
                     });
                     let mut intent = None;
                     let mut save = None;
                     ui.add_enabled_ui(!self.project.busy(), |ui| {
-                        ui.menu_button("Project", |ui| {
+                        let _project_menu = ui.menu_button("Project", |ui| {
                             if ui.button("New project…").clicked() {
                                 intent = Some(Intent::New);
                                 ui.close();
@@ -296,6 +302,11 @@ impl SidebarVideo {
                                 ui.close();
                             }
                         });
+                        #[cfg(feature = "validation-screenshot")]
+                        input_probe::project_menu(
+                            &_project_menu.response,
+                            _project_menu.inner.is_some(),
+                        );
                     });
                     if let Some(intent) = intent {
                         self.request(intent, ctx);
@@ -548,7 +559,47 @@ impl SidebarVideo {
                 egui::vec2(width, width / aspect),
             );
             ui.painter().rect_filled(stage, 16, CANVAS);
-            if let Some(texture) = &self.capture.texture {
+            if self.project.store().is_none() {
+                ui.allocate_ui_with_layout(
+                    available,
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        ui.add_space(((available.y - 104.) / 2.).max(0.));
+                        ui.label(strong("Start a recording project", 18.).color(INK));
+                        hint(
+                            ui,
+                            if self.project.busy() {
+                                "Finish or cancel the folder selection in the system dialog."
+                            } else {
+                                "Create or open a project to enable recording."
+                            },
+                        );
+                        ui.horizontal(|ui| {
+                            ui.add_space(((ui.available_width() - 306.) / 2.).max(0.));
+                            if ui
+                                .add_enabled(
+                                    !self.project.busy(),
+                                    egui::Button::new("Create project…")
+                                        .min_size(egui::vec2(148., 44.)),
+                                )
+                                .clicked()
+                            {
+                                self.request(Intent::New, ui.ctx());
+                            }
+                            if ui
+                                .add_enabled(
+                                    !self.project.busy(),
+                                    egui::Button::new("Open project…")
+                                        .min_size(egui::vec2(148., 44.)),
+                                )
+                                .clicked()
+                            {
+                                self.request(Intent::Open, ui.ctx());
+                            }
+                        });
+                    },
+                );
+            } else if let Some(texture) = &self.capture.texture {
                 let source = texture.size_vec2();
                 let ratio = (stage.width() / source.x).max(stage.height() / source.y);
                 let size = stage.size() / ratio / source;
@@ -616,6 +667,8 @@ impl SidebarVideo {
                     38.,
                     if self.capture.taking() {
                         Color32::from_rgb(176, 34, 48)
+                    } else if !self.capture.can_record() {
+                        MUTED
                     } else {
                         ACCENT
                     },
@@ -1093,6 +1146,30 @@ impl eframe::App for SidebarVideo {
         }
         self.show(ctx);
         #[cfg(feature = "validation-screenshot")]
+        input_probe::sample(
+            ctx,
+            input_probe::Flags {
+                project_present: self.project.store().is_some(),
+                project_busy: self.project.busy(),
+                project_loading: self.project.loading(),
+                output_busy: self.output.busy(),
+                confirm: self.confirm.is_some(),
+                version: self.version_summary.is_some(),
+                trim: self.trim.is_some(),
+                overlay_editing: self.cards.editing(),
+                overlay_busy: self.cards.busy(),
+                ai_open: self.ai.open,
+                ai_busy: self.ai.busy(),
+                youtube_open: self.youtube.open,
+                youtube_busy: self.youtube.busy(),
+                camera_settings: self.capture.show_settings,
+                recovery_pending: !self.capture.recoveries.is_empty(),
+                capture_busy: self.capture.busy(),
+                camera_running: self.capture.camera_running(),
+                allow_close: self.allow_close,
+            },
+        );
+        #[cfg(feature = "validation-screenshot")]
         if ctx.cumulative_pass_nr() < 3 {
             ctx.request_repaint();
         }
@@ -1121,6 +1198,12 @@ fn main() -> eframe::Result {
         app.youtube.show_window();
     }
     let title = format!("Storyfold · Record studio ({})", env!("CARGO_PKG_VERSION"));
+    #[cfg(feature = "validation-screenshot")]
+    let title = if input_probe::enabled() {
+        format!("{title} · Input check")
+    } else {
+        title
+    };
     eframe::run_native(
         &title,
         eframe::NativeOptions {
@@ -1138,6 +1221,8 @@ fn main() -> eframe::Result {
         },
         Box::new(move |cc| {
             configure(&cc.egui_ctx);
+            app.project
+                .set_folder_dialog(rfd::FileDialog::new().set_parent(cc));
             Ok(Box::new(app))
         }),
     )
@@ -1225,6 +1310,21 @@ mod tests {
                 "Record must fit above sequence: {bounds:?}"
             );
             assert!(bounds.x0 >= 0. && bounds.x1 <= f64::from(size[0]));
+            for action in ["Create project…", "Open project…"] {
+                let action_bounds = update
+                    .nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some(action))
+                    .unwrap_or_else(|| panic!("Missing startup action {action}"))
+                    .1
+                    .bounds()
+                    .unwrap();
+                assert!(action_bounds.x0 >= 250. && action_bounds.x1 <= f64::from(size[0] - 304.));
+                assert!(
+                    action_bounds.y0 >= 112. && action_bounds.y1 <= bounds.y0,
+                    "Startup action must fit above Record: {action_bounds:?}, Record {bounds:?}"
+                );
+            }
         }
     }
     #[test]
