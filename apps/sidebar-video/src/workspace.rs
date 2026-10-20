@@ -7,7 +7,7 @@ use std::{
 };
 use video_core::{Edit, EditOutcome, Editor, ProjectStore, SaveVersion, Studio};
 
-type Store = Arc<Mutex<ProjectStore>>;
+pub type Store = Arc<Mutex<ProjectStore>>;
 enum Message {
     Opened {
         store: Store,
@@ -55,8 +55,21 @@ impl Default for Workspace {
     }
 }
 impl Workspace {
+    #[cfg(all(test, feature = "capture-test", target_os = "linux"))]
+    pub fn test_project(path: &std::path::Path) -> Self {
+        let (store, studio) = ProjectStore::create(path, "Generated UI check").unwrap();
+        let mut workspace = Self::default();
+        workspace.accept(Message::Opened {
+            store: Arc::new(Mutex::new(store)),
+            studio,
+        });
+        workspace
+    }
     pub fn studio(&self) -> &Studio {
         self.editor.studio()
+    }
+    pub fn store(&self) -> Option<Store> {
+        self.store.clone()
     }
     pub fn dirty(&self) -> bool {
         self.studio() != &self.baseline

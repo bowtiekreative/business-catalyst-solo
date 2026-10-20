@@ -1,6 +1,10 @@
 //! Storyfold native Record studio. UI forwards edits to video-core.
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, Vec2};
+mod capture;
+mod overlays;
+use overlays::OverlaysUi;
 mod workspace;
+use capture::CaptureUi;
 use video_core::{ClipId, Direction, Edit, EditOutcome, Nudge, Orientation, TrimEdge};
 use workspace::Workspace;
 
@@ -126,6 +130,8 @@ struct TrimDraft {
 #[derive(Default)]
 struct SidebarVideo {
     project: Workspace,
+    capture: CaptureUi,
+    cards: OverlaysUi,
     name_draft: String,
     selected: Option<ClipId>,
     playhead_ms: u64,
@@ -156,7 +162,12 @@ impl SidebarVideo {
             .is_some()
     }
     fn request(&mut self, intent: Intent, ctx: &egui::Context) {
-        if self.project.busy() {
+        if self.cards.editing() {
+            self.cards.error =
+                Some("Approve or cancel this card before replacing the project or closing.".into());
+        } else if !self.capture.can_leave() || self.cards.busy() {
+            self.capture.error = Some("Stop the camera and wait for takes and media operations to finish before opening another project or closing.".into());
+        } else if self.project.busy() {
             self.project.status = "Wait for the current project operation to finish.".into();
         } else if self.dirty() {
             self.confirm = Some(intent);
@@ -230,6 +241,7 @@ impl SidebarVideo {
                         ui.menu_button("Project", |ui| {
                             if ui.button("New project…").clicked() { intent=Some(Intent::New); ui.close(); }
                             if ui.button("Open project…").clicked() { intent=Some(Intent::Open); ui.close(); }
+                            if ui.add_enabled(self.capture.can_leave() && self.project.store().is_some(),egui::Button::new("Recover interrupted recordings…")).clicked() { self.capture.find_recovery(&self.project,ctx); ui.close(); }
                             ui.separator();
                             if ui.button("Save    Ctrl+S").clicked() { save=Some(false); ui.close(); }
                             if ui.button("Save version…    Ctrl+Shift+S").clicked() { save=Some(true); ui.close(); }
@@ -237,6 +249,7 @@ impl SidebarVideo {
                     });
                     if let Some(intent)=intent { self.request(intent,ctx); }
                     if let Some(version)=save { self.save(ctx,version); }
+                    if ui.button(if self.capture.camera_running(){"Camera on"}else{"Camera…"}).clicked() { self.capture.show_settings=true; if self.capture.devices.is_none(){self.capture.refresh(ctx);} }
                     ui.add_enabled_ui(!self.project.loading(), |ui| {
                         ui.vertical(|ui| {
                             ui.set_width(220.);
@@ -249,7 +262,7 @@ impl SidebarVideo {
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         pending(ui,"Export MP4","MP4 export will be connected after native capture and overlay rendering.");
-                        ui.add_enabled_ui(!self.project.loading(), |ui| {
+                        ui.add_enabled_ui(!self.project.loading() && self.capture.can_leave(), |ui| {
                             for orientation in [Orientation::Vertical,Orientation::Horizontal] {
                                 let selected=self.project.studio().orientation()==orientation;
                                 let mut button=egui::Button::new(strong(orientation.label(),13.).color(if selected {CARD} else {BODY})).min_size(egui::vec2(152.,44.));
@@ -335,30 +348,35 @@ impl SidebarVideo {
                     }
                 });
                 ui.add_space(12.);
-                pending(ui,"Add media","Safe media import is part of the native capture implementation.");
+                if ui.add_enabled(self.capture.can_leave() && !self.project.busy() && self.project.store().is_some(),egui::Button::new("Add media…")).on_disabled_hover_text("Save a project and stop its camera before importing local media.").clicked(){ self.capture.import(&self.project,ui.ctx()); }
+                if self.capture.busy(){ui.horizontal(|ui|{ui.spinner();ui.label(&self.capture.message);if ui.button("Cancel import / recovery").clicked(){self.capture.cancel_operation();}});}
                 ui.add_space(12.);ui.separator();ui.add_space(8.);
                 ui.label(strong("Saved on your computer",12.).color(INK));
                 hint(ui,"Project → Save stores your timeline. Save version adds a local Git checkpoint. Media files stay intact when you trim or remove clips.");
             });
         });
     }
-    fn overlays(&self, ui: &mut egui::Ui) {
+    fn overlays(&mut self, ui: &mut egui::Ui) {
         card(16).show(ui, |ui| {
             ui.set_min_height((ui.available_height()-2.).max(0.));
             ui.horizontal(|ui| {ui.label(strong("On-screen cards",14.).color(INK));hint(ui,"1–9");});
-            hint(ui,"Card rendering and the local AI builder are next. Existing cue times appear in the sequence.");ui.add_space(12.);
-            egui::ScrollArea::vertical().id_salt("sidebar_slots").max_height((ui.available_height()-104.).max(120.)).show(ui, |ui| {
-                for slot in self.project.studio().slots() {
-                    let text=format!("{}     {}",slot.key().number(),slot.kind().map_or("Empty overlay slot",|kind| kind.label()));
-                    ui.add_enabled(false,egui::Button::new(text).min_size(egui::vec2(ui.available_width(),44.)))
-                        .on_disabled_hover_text("Overlay content editing will be connected to the shared renderer.");
+            hint(ui,"Edit and approve a card. Show adds five seconds at the playhead or in your active take.");
+            ui.checkbox(&mut self.cards.reduced_motion,"Reduce card motion");
+            let slots=self.project.studio().slots().to_vec();
+            egui::ScrollArea::vertical().id_salt("sidebar_slots").max_height((ui.available_height()-112.).max(100.)).show(ui, |ui| {
+                for slot in slots {
+                    ui.horizontal(|ui| {
+                        let text=format!("{}  {}",slot.key().number(),slot.kind().map_or("Empty card",|kind| kind.label()));
+                        if ui.add_sized([ui.available_width()-72.,44.],egui::Button::new(text)).clicked(){self.cards.edit(slot.key(),slot.content().cloned());}
+                        if ui.add_enabled(slot.content().is_some(),egui::Button::new("Show").min_size(egui::vec2(62.,44.))).clicked(){self.cards.fire(slot.key(),&mut self.project,&mut self.capture,self.playhead_ms);}
+                    });
                 }
             });
-            ui.add_space(12.);pending(ui,"Build with local AI","The local AI overlay builder is not connected yet.");
-            ui.add_space(8.);hint(ui,"Lower third · stat · screenshot · list · photo · quote");
+            pending(ui,"Build with local AI","The local AI overlay builder is being connected.");
+            if let Some(error)=&self.cards.error{ui.colored_label(Color32::from_rgb(160,30,45),error);}
         });
     }
-    fn stage(&self, ui: &mut egui::Ui) {
+    fn stage(&mut self, ui: &mut egui::Ui) {
         let geometry = self.project.studio().orientation().output_size();
         compact_row(ui, |ui| {
             ui.label(strong("Your recording", 15.).color(INK));
@@ -379,56 +397,116 @@ impl SidebarVideo {
                 egui::vec2(width, width / aspect),
             );
             ui.painter().rect_filled(stage, 16, CANVAS);
-            for fraction in [1. / 3., 2. / 3.] {
-                let x = egui::lerp(stage.x_range(), fraction);
-                let y = egui::lerp(stage.y_range(), fraction);
-                ui.painter().line_segment(
-                    [egui::pos2(x, stage.top()), egui::pos2(x, stage.bottom())],
-                    Stroke::new(1.0_f32, Color32::from_white_alpha(150)),
+            if let Some(texture) = &self.capture.texture {
+                let source = texture.size_vec2();
+                let ratio = (stage.width() / source.x).max(stage.height() / source.y);
+                let size = stage.size() / ratio / source;
+                let uv = egui::Rect::from_center_size(egui::pos2(0.5, 0.5), size);
+                ui.painter().image(texture.id(), stage, uv, Color32::WHITE);
+            } else {
+                for fraction in [1. / 3., 2. / 3.] {
+                    let x = egui::lerp(stage.x_range(), fraction);
+                    let y = egui::lerp(stage.y_range(), fraction);
+                    ui.painter().line_segment(
+                        [egui::pos2(x, stage.top()), egui::pos2(x, stage.bottom())],
+                        Stroke::new(1.0_f32, Color32::from_white_alpha(150)),
+                    );
+                    ui.painter().line_segment(
+                        [egui::pos2(stage.left(), y), egui::pos2(stage.right(), y)],
+                        Stroke::new(1.0_f32, Color32::from_white_alpha(150)),
+                    );
+                }
+                let label = stage.center() + egui::vec2(0., -8.);
+                ui.painter().text(
+                    label,
+                    egui::Align2::CENTER_CENTER,
+                    "No camera open",
+                    FontId::new(
+                        18_f32.min(stage.width() / 9.),
+                        FontFamily::Name("Inter 600".into()),
+                    ),
+                    INK,
                 );
-                ui.painter().line_segment(
-                    [egui::pos2(stage.left(), y), egui::pos2(stage.right(), y)],
-                    Stroke::new(1.0_f32, Color32::from_white_alpha(150)),
+                ui.painter().text(
+                    label + egui::vec2(0., 29.),
+                    egui::Align2::CENTER_CENTER,
+                    "Camera… → Enable camera",
+                    FontId::proportional(12.),
+                    BODY,
+                );
+                ui.allocate_rect(ui.max_rect(), egui::Sense::hover())
+                    .widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Label,
+                            false,
+                            "Camera stage. No camera open.",
+                        )
+                    });
+            }
+            if let Some(texture) = &self.cards.texture {
+                ui.painter().image(
+                    texture.id(),
+                    stage,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
+                    Color32::WHITE,
                 );
             }
-            let label = stage.center() + egui::vec2(0., -8.);
-            ui.painter().text(
-                label,
-                egui::Align2::CENTER_CENTER,
-                "No camera open",
-                FontId::new(
-                    18_f32.min(stage.width() / 9.),
-                    FontFamily::Name("Inter 600".into()),
-                ),
-                INK,
-            );
-            ui.painter().text(
-                label + egui::vec2(0., 29.),
-                egui::Align2::CENTER_CENTER,
-                "Native capture is being connected",
-                FontId::proportional(12.),
-                BODY,
-            );
-            ui.allocate_rect(ui.max_rect(), egui::Sense::hover())
-                .widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Label,
-                        false,
-                        "Camera stage. No camera open.",
-                    )
-                });
         });
         ui.add_space(16.);
         ui.vertical_centered(|ui| {
-            ui.add_enabled_ui(false, |ui| {
-                let (rect,response)=ui.allocate_exact_size(egui::vec2(88.,88.),egui::Sense::click());
-                ui.painter().circle_filled(rect.center(),43.,CARD);ui.painter().circle_stroke(rect.center(),43.,Stroke::new(2.0_f32,ACCENT));
-                ui.painter().circle_filled(rect.center(),38.,ACCENT);ui.painter().circle_filled(rect.center(),13.,CARD);
-                response.widget_info(||egui::WidgetInfo::labeled(egui::WidgetType::Button,false,"Record. Native capture is not connected yet."));
-                response.on_disabled_hover_text("Use the installed Storyfold Record tab while the native capture pipeline is being built.");
+            ui.add_enabled_ui(self.capture.can_record() && !self.project.loading(), |ui| {
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(88., 88.), egui::Sense::click());
+                ui.painter().circle_filled(rect.center(), 43., CARD);
+                ui.painter()
+                    .circle_stroke(rect.center(), 43., Stroke::new(2.0_f32, ACCENT));
+                ui.painter().circle_filled(
+                    rect.center(),
+                    38.,
+                    if self.capture.taking() {
+                        Color32::from_rgb(176, 34, 48)
+                    } else {
+                        ACCENT
+                    },
+                );
+                ui.painter().circle_filled(rect.center(), 13., CARD);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        self.capture.can_record(),
+                        "Record. Hold for a clip; tap to start or stop a long take.",
+                    )
+                });
+                self.capture.record_button(&response, ui.ctx());
             });
-            ui.add_space(8.);ui.label(strong("Hold = clip · Tap = long take",13.).color(BODY));
-            hint(ui,"Camera and microphone are off.");
+            ui.add_space(8.);
+            ui.label(strong("Hold = clip · Tap = long take", 13.).color(BODY));
+            hint(ui, &self.capture.timer());
+            if self.capture.camera_running() {
+                ui.horizontal(|ui| {
+                    if ui.button("Stop camera").clicked() {
+                        self.capture.stop();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.capture.taking(),
+                            egui::Button::new("Stop and save take"),
+                        )
+                        .clicked()
+                    {
+                        self.capture.stop_take();
+                    }
+                    if ui
+                        .add_enabled(self.capture.taking(), egui::Button::new("Cancel take"))
+                        .clicked()
+                    {
+                        self.capture.cancel_take();
+                    }
+                });
+            }
+            if let Some(error) = &self.capture.error {
+                ui.colored_label(Color32::from_rgb(160, 30, 45), error);
+            }
         });
     }
     fn sequence(&mut self, ctx: &egui::Context) {
@@ -717,6 +795,9 @@ impl SidebarVideo {
             || self.trim.is_some()
             || self.version_summary.is_some()
             || self.project.loading()
+            || self.cards.editing()
+            || self.capture.show_settings
+            || !self.capture.recoveries.is_empty()
         {
             return;
         }
@@ -731,6 +812,9 @@ impl SidebarVideo {
             self.save(ctx, save_version);
         }
         if !ctx.wants_keyboard_input() {
+            self.capture.space(ctx);
+            self.cards
+                .shortcuts(&mut self.project, &mut self.capture, self.playhead_ms, ctx);
             if ctx.input_mut(|i| {
                 i.consume_key(
                     egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
@@ -755,7 +839,12 @@ impl SidebarVideo {
             self.playhead_ms = 0;
             self.show_removed = false;
         }
+        if let Some(clip) = self.capture.poll(&mut self.project, ctx) {
+            self.select(clip);
+        }
         self.shortcuts(ctx);
+        self.cards
+            .tick(&self.project, &self.capture, self.playhead_ms, ctx);
         self.header(ctx);
         self.sequence(ctx);
         egui::SidePanel::left("sidebar_takes")
@@ -784,6 +873,9 @@ impl SidebarVideo {
             )
             .show(ctx, |ui| self.stage(ui));
         self.dialogs(ctx);
+        self.cards.dialog(&mut self.project, ctx);
+        self.capture.settings_dialog(&self.project, ctx);
+        self.capture.recovery_dialog(&self.project, ctx);
     }
 }
 fn timecode(ms: u64) -> String {
@@ -810,7 +902,11 @@ impl eframe::App for SidebarVideo {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if ctx.input(|i| i.viewport().close_requested())
             && !self.allow_close
-            && (self.dirty() || self.project.busy())
+            && (self.dirty()
+                || self.project.busy()
+                || !self.capture.can_leave()
+                || self.cards.busy()
+                || self.cards.editing())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request(Intent::Close, ctx);
@@ -914,8 +1010,8 @@ mod tests {
                 .collect();
             for text in [
                 "Export MP4",
-                "Record. Native capture",
-                "Empty overlay slot",
+                "Record. Hold",
+                "Empty card",
                 "Split at playhead",
                 "Playhead",
             ] {
@@ -927,10 +1023,7 @@ mod tests {
             let bounds = update
                 .nodes
                 .iter()
-                .find(|(_, node)| {
-                    node.label()
-                        .is_some_and(|s| s.starts_with("Record. Native capture"))
-                })
+                .find(|(_, node)| node.label().is_some_and(|s| s.starts_with("Record. Hold")))
                 .unwrap()
                 .1
                 .bounds()

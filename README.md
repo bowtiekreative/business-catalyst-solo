@@ -81,25 +81,28 @@ tracked in [ROADMAP.md](ROADMAP.md). No API key is needed for the starter.
 See [architecture](docs/ARCHITECTURE.md), [security boundaries](docs/SECURITY.md)
 and [implementation decisions](docs/DECISIONS.md).
 
-## Sidebar Video · milestone 1
+## Storyfold Record studio · in development
 
 ```sh
 cargo run -p sidebar-video
 ```
 
-This opens a native Storyfold-branded Record studio layout with bundled Inter
-400/600 fonts, a real in-memory name and shape switch, nine empty overlay slots,
-a take bin, camera stage and empty clip/overlay tracks. Export, recording,
-imports, clip tools and the local AI builder are visibly disabled and labelled
-as later milestones. It makes no inference, network or device requests, opens no
-project folder, and writes no project files. Name and shape changes last only
-for the current window.
+Create/open a project using **Project**. **Camera…** discovers devices and lets
+you explicitly enable continuous capture. Select a microphone to include it;
+Microphone off is the default. Hold Record/Space for a clip, or tap twice for a
+long take. Stop camera before changing projects or shape. **Add media** imports
+a local video; **Project → Recover interrupted recordings** preserves existing
+clips while adding missing takes. Saved media stays intact during timeline edits.
 
-`packages/video-core` owns output geometry, validated slot identities and studio
-settings; `apps/sidebar-video` draws and forwards events. Later milestones add
-project/timeline operations, recording, a shared preview/export renderer, local
-AI, inserts, MP4 output and YouTube. The current Dioxus Storyfold application
-continues separately until this native implementation reaches feature parity.
+Edit one of nine cards, add exact text/image and highlights, then **Approve**.
+**Show** (keys1–9) adds a five-second cue during a take or at the playhead.
+Later slot edits retain existing cue content. Project saves and local versions
+use confined atomic writes; nothing auto-pushes.
+
+Native sequence export/playback, local AI, inserts, publishing and packaging are
+still being connected. The working Dioxus Storyfold application continues until
+this studio reaches feature parity. See docs/VALIDATION.md for checks actually run;
+physical-camera timing/drift and Windows acceptance are not established.
 
 Inter font provenance and the SIL Open Font License are included under
 [`packages/video-core/assets/fonts`](packages/video-core/assets/fonts/README.md).

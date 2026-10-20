@@ -85,6 +85,11 @@ pub enum Edit {
         content: OverlayContent,
         duration_ms: u64,
     },
+    AddCueAtPlayhead {
+        sequence_ms: u64,
+        slot: SlotKey,
+        duration_ms: u64,
+    },
     RemoveCue {
         cue: CueId,
     },
@@ -187,6 +192,19 @@ impl Studio {
             .position(|clip| clip.id == id)
             .ok_or_else(|| "Active clip does not exist".into())
     }
+    fn at_playhead(&self, sequence_ms: u64) -> Result<(&Clip, u64)> {
+        let mut start = 0_u64;
+        for clip in &self.clips {
+            let end = start
+                .checked_add(clip.duration_ms())
+                .ok_or("Sequence duration overflow")?;
+            if sequence_ms >= start && sequence_ms < end {
+                return Ok((clip, sequence_ms - start));
+            }
+            start = end;
+        }
+        Err("Playhead must be inside an active clip".into())
+    }
     fn apply_one(&mut self, edit: Edit) -> Result<EditOutcome> {
         let before = self.clone();
         match edit {
@@ -276,19 +294,8 @@ impl Studio {
                 return Ok(EditOutcome::ClipSplit(id));
             }
             Edit::SplitAtPlayhead { sequence_ms } => {
-                let mut start = 0_u64;
-                let mut resolved = None;
-                for clip in &self.clips {
-                    let end = start
-                        .checked_add(clip.duration_ms())
-                        .ok_or("Sequence duration overflow")?;
-                    if sequence_ms >= start && sequence_ms < end {
-                        resolved = Some((clip.id, sequence_ms - start));
-                        break;
-                    }
-                    start = end;
-                }
-                let (clip, offset_ms) = resolved.ok_or("Playhead must be inside an active clip")?;
+                let (clip, offset_ms) = self.at_playhead(sequence_ms)?;
+                let clip = clip.id;
                 return self.apply_one(Edit::SplitClip { clip, offset_ms });
             }
             Edit::TrimClip {
@@ -395,6 +402,29 @@ impl Studio {
                 });
                 return Ok(EditOutcome::CueAdded(id));
             }
+            Edit::AddCueAtPlayhead {
+                sequence_ms,
+                slot,
+                duration_ms,
+            } => {
+                let (clip, offset_ms) = self.at_playhead(sequence_ms)?;
+                let duration_ms = duration_ms.min(clip.duration_ms() - offset_ms);
+                let clip = clip.id;
+                let content = self
+                    .slots()
+                    .iter()
+                    .find(|s| s.key() == slot)
+                    .and_then(|s| s.content())
+                    .cloned()
+                    .ok_or("Approve this card before adding a cue")?;
+                return self.apply_one(Edit::AddCueFromSnapshot {
+                    clip,
+                    offset_ms,
+                    slot,
+                    content,
+                    duration_ms,
+                });
+            }
             Edit::RemoveCue { cue } => {
                 let index = self
                     .cues
@@ -478,6 +508,55 @@ pub(crate) mod tests {
             })
             .unwrap();
         (editor, first, second, cue)
+    }
+    #[test]
+    fn playhead_cues_use_half_open_clips_clamp_duration_and_keep_history_atomic() {
+        let (mut editor, _, second, _) = populated();
+        let slot = SlotKey::try_from(1).unwrap();
+        let content = OverlayContent::new(OverlayKind::Quote, "Approved words");
+        editor
+            .apply(Edit::SetSlotContent {
+                slot,
+                content: content.clone(),
+            })
+            .unwrap();
+        let before = editor.studio().clone();
+        let history = editor.undo_len();
+        assert!(
+            editor
+                .apply(Edit::AddCueAtPlayhead {
+                    sequence_ms: 15_000,
+                    slot,
+                    duration_ms: 5000
+                })
+                .is_err()
+        );
+        assert_eq!(editor.studio(), &before);
+        assert_eq!(editor.undo_len(), history);
+        editor
+            .apply(Edit::AddCueAtPlayhead {
+                sequence_ms: 10_000,
+                slot,
+                duration_ms: 8000,
+            })
+            .unwrap();
+        let cue = editor.studio().cues().last().unwrap();
+        assert_eq!(cue.clip_id(), second);
+        assert_eq!(cue.offset_ms(), 0);
+        assert_eq!(cue.duration_ms(), 5000);
+        assert_eq!(cue.content(), Some(&content));
+        assert!(editor.undo());
+        assert_eq!(editor.studio().cues(), before.cues());
+        editor
+            .apply(Edit::AddCueAtPlayhead {
+                sequence_ms: 14_999,
+                slot,
+                duration_ms: 5000,
+            })
+            .unwrap();
+        let cue = editor.studio().cues().last().unwrap();
+        assert_eq!(cue.offset_ms(), 4999);
+        assert_eq!(cue.duration_ms(), 1);
     }
     #[test]
     fn moving_changes_sequence_time_but_cue_stays_with_its_clip() {

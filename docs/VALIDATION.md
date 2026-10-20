@@ -297,3 +297,28 @@ four animation times (192 output-frame comparisons), with exact straight-RGBA
 byte equality. Its full-frame reference switch exists only under `cfg(test)`.
 The previously recorded timing uses the same final rendering implementation;
 expanding the equivalence matrix changed only the ignored proof harness.
+
+
+## Native capture/card controls — 2026-10-19 (Edmonton)
+
+- App8 unit/UI tests passed: both-shape AccessKit/control bounds, core history,
+  draft/save acknowledgement, manual approved cue forwarding and stale renderer
+  frame rejection. A boundary regression caught eager unsigned subtraction in
+  initial UI cue lookup; the final implementation delegates lookup/clamping to
+  typed core Edit::AddCueAtPlayhead.
+- Opt-in `cargo test -p sidebar-video --features capture-test --locked --offline
+  generated_pointer_space -- --ignored --nocapture` with
+  `STORYFOLD_CAPTURE_TEST=1`: passed,9.43seconds. Generated video only: pointer
+  hold released outside Record, tap-tap long take, mixed Space/pointer input,
+  exactly3 completed clips, camera stop, newer name retained through finalize,
+  save/load equality and recovery without duplicate clips. No hardware opened.
+- Image import check passed: generated PNG bytes preserved; invalid image,
+  cancelled input, symlink and hard-link imports published no additional file.
+- App all-target/all-feature warning-denied Clippy passed. Native validation
+  launches under Xvfb at1480×1000 horizontal and1160×800 portrait exited cleanly;
+  both screenshots were inspected in data/sidebar-video-ui/. These are empty
+  camera layouts, not evidence of native physical-camera operation.
+
+The installed Dioxus application remains the usable release. Native sequence
+playback/export integration, local AI, inserts, publishing/keychain, packaging
+and physical timing/drift/unplug acceptance remain incomplete.

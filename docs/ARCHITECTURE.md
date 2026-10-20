@@ -186,3 +186,26 @@ stay unchanged. Exact content/geometry/image-size cache keys also retain success
 content validation: every changed snapshot revalidates before it can enter the
 cache. The test-only old full-layer path proves byte equality and is absent from
 normal builds. Camera capture/preview frame rate is unaffected by this optimization.
+
+
+### Native capture controls and manual card approval
+
+The egui controller explicitly enables one continuous core session after device
+selection. Discovery, startup, local import and recovery run on worker channels.
+Pointer release outside Record and Space release reach the core gesture controller.
+Mixed input does not duplicate a take; focus loss finishes its active range.
+New/Open/close and shape changes wait for capture and media work to finish.
+Completed takes append through one core transaction to the current Editor, then
+save on the existing worker. Recovery skips media already present in the model,
+retaining timeline edits and Removed clips. Short append validation uses try-lock;
+painting never waits for a long import or save. Session reaping runs off-thread.
+
+Manual cards remain drafts until Approve. Text blocks, Unicode selections,
+highlight style, motion and an explicitly imported image form one core snapshot.
+Edit::AddCueAtPlayhead owns clip lookup and end clamping; the app has no second
+timeline calculation. Cue snapshots remain immutable after later slot edits.
+PNG/JPEG/WebP import validates bounded decoding before atomic publication.
+The card worker uses one-job/one-result bounded channels. Font shaping, image
+preparation and rasterization stay off painting. Assets are reused until the
+project/image set changes. Project epochs reject late frames. The app uploads
+straight RGBA without another layout path. Reduced motion invalidates preview.

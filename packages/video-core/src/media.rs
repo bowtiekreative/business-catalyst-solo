@@ -200,6 +200,61 @@ pub fn import_media(
     pending.publish()?;
     ImportedMedia::published(store.root(), relative, name, copied)
 }
+/// Import an explicitly selected screenshot/photo. Decode is bounded before an
+/// atomic copy is published; neither an external path nor a URL enters JSON.
+pub fn import_image(store: &ProjectStore, source: &Path, cancel: &Cancellation) -> Result<String> {
+    cancel.check()?;
+    local::reject_file_links(source)?;
+    let before = fs::metadata(source)?;
+    if !before.is_file() || before.len() > 16 * 1024 * 1024 {
+        return Err("Choose a regular PNG, JPEG or WebP image under16 MiB".into());
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(source)?
+        .take(16 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        return Err("Image exceeds16 MiB".into());
+    }
+    let format = image::guess_format(&bytes).map_err(|_| "Choose a PNG, JPEG or WebP image")?;
+    let extension = match format {
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::Jpeg => "jpg",
+        image::ImageFormat::WebP => "webp",
+        _ => return Err("Choose a PNG, JPEG or WebP image".into()),
+    };
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+        .decode()
+        .map_err(|_| "Image cannot decode within4096px/64 MiB limits")?;
+    cancel.check()?;
+    local::reject_file_links(source)?;
+    let after = fs::metadata(source)?;
+    if before.len() != after.len()
+        || before.modified()? != after.modified()?
+        || before.len() != bytes.len() as u64
+    {
+        return Err("Image changed during import".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if before.ino() != after.ino() || before.dev() != after.dev() {
+            return Err("Image changed during import".into());
+        }
+    }
+    let relative = format!("media/image-{}.{}", unique_id(), extension);
+    let mut pending = PendingFile::prepare(store.root(), &relative)?;
+    pending.file_mut().write_all(&bytes)?;
+    cancel.check()?;
+    pending.publish()?;
+    Ok(relative)
+}
 fn selected_file(source: &Path) -> Result<PathBuf> {
     let meta = fs::symlink_metadata(source)?;
     if !meta.is_file() || meta.file_type().is_symlink() {
@@ -384,6 +439,39 @@ pub(crate) fn probe_owned(source: &Path, cancel: &Cancellation) -> Result<MediaI
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_import_decodes_before_publishing_and_rejects_cancelled_or_linked_input() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _) = ProjectStore::create(temp.path().join("project"), "Image check").unwrap();
+        let input = temp.path().join("source.png");
+        image::RgbaImage::from_pixel(4, 3, image::Rgba([120, 96, 181, 255]))
+            .save(&input)
+            .unwrap();
+        let bytes = fs::read(&input).unwrap();
+        let relative = import_image(&store, &input, &Cancellation::default()).unwrap();
+        assert!(relative.starts_with("media/image-"));
+        assert_eq!(fs::read(store.root().join(relative)).unwrap(), bytes);
+        let before = fs::read_dir(store.root().join("media")).unwrap().count();
+        let cancelled = Cancellation::default();
+        cancelled.cancel();
+        assert!(import_image(&store, &input, &cancelled).is_err());
+        let broken = temp.path().join("broken.png");
+        fs::write(&broken, b"not an image").unwrap();
+        assert!(import_image(&store, &broken, &Cancellation::default()).is_err());
+        #[cfg(unix)]
+        {
+            let linked = temp.path().join("linked.png");
+            std::os::unix::fs::symlink(&input, &linked).unwrap();
+            assert!(import_image(&store, &linked, &Cancellation::default()).is_err());
+            fs::remove_file(&linked).unwrap();
+            fs::hard_link(&input, &linked).unwrap();
+            assert!(import_image(&store, &input, &Cancellation::default()).is_err());
+        }
+        assert_eq!(
+            fs::read_dir(store.root().join("media")).unwrap().count(),
+            before
+        );
+    }
     #[test]
     fn subprocess_output_timeout_and_cancellation_are_bounded() {
         const CHILD: &str = "STORYFOLD_MEDIA_RUNNER_TEST_CHILD";
