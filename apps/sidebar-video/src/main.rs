@@ -1089,6 +1089,13 @@ fn main() -> eframe::Result {
         "Storyfold · Record studio",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
+                .with_app_id("storyfold-record")
+                .with_icon(
+                    eframe::icon_data::from_png_bytes(include_bytes!(
+                        "../../../packaging/record-studio/storyfold-record.png"
+                    ))
+                    .expect("Valid bundled Storyfold icon"),
+                )
                 .with_inner_size(size)
                 .with_min_inner_size([1160., 800.]),
             ..Default::default()

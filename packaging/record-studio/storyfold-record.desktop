@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Storyfold Record Studio
+Comment=Record takes, arrange a sequence, and build reviewed visual cards
+Exec=storyfold-record
+Icon=storyfold-record
+Terminal=false
+Categories=AudioVideo;Video;Recorder;
+StartupNotify=true
