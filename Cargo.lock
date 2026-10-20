@@ -3154,6 +3154,7 @@ dependencies = [
  "catalyst-core",
  "cosmic-text",
  "ffmpeg-sidecar",
+ "fontdb",
  "image",
  "libc",
  "serde",

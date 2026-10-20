@@ -36,7 +36,7 @@ review, Git or existing desktop behavior:
 - `packages/video-core`: in-memory studio settings, exact 1920×1080 / 1080×1920
   geometry, bounded slot identities and overlay-kind vocabulary. The app forwards
   settings changes here; the core reuses `catalyst_core::check_secrets` for names.
-- `apps/sidebar-video/assets/fonts`: unmodified Inter 4.1 Regular/SemiBold TTFs,
+- `packages/video-core/assets/fonts`: unmodified Inter 4.1 Regular/SemiBold TTFs,
   upstream SIL OFL text and source/hash provenance, embedded without font requests.
 
 The new app has no backend, device handles, file store, Git repository,
@@ -137,3 +137,44 @@ The native studio UI (`apps/sidebar-video/src/workspace.rs`) owns only its Edito
 view state and an acknowledged save snapshot. ProjectStore is used on worker
 threads for New/Open/Save/Save version. The UI forwards typed domain edits; it
 contains no second timeline model or external command interface.
+
+## Shared overlay renderer · milestone 5
+
+`video_core::renderer::OverlayRenderer` is the only overlay layout/raster path.
+`render_live` accepts immutable approved content snapshots with elapsed/duration
+milliseconds. `render_timeline` selects active clip-relative cues at global time,
+uses the core sequence-time lookup and calls that same live renderer. Removed
+clips do not play. Intervals are half-open; inactive cues produce transparent
+pixels. An active legacy kind-only cue reports missing approved content rather
+than inventing text. Up to nine active overlays compose in caller/cue order.
+
+The renderer shapes Inter text with cosmic-text and draws cards, images, glyphs
+and emphasis with tiny-skia. Both horizontal and vertical output sizes use core
+layouts for lower thirds, statistics, screenshot cards, numbered lists, photos
+and quotes. It retains every approved text block, wraps it, measures the complete
+card and refuses overflow at readable font sizes. A missing unsupported glyph
+also reports an error. No ellipsis or silent copied-text truncation is used.
+
+The two unchanged Inter 4.1 font files, OFL and provenance now live once under
+`packages/video-core/assets/fonts`. The app reads public embedded font constants.
+The renderer constructs an empty font database, loads only those two faces and
+uses a fixed locale; it does not scan installed fonts. Layout and glyph caches
+are bounded. `RgbaFrame.pixels` explicitly converts tiny-skia's premultiplied
+pixels to straight RGBA for both egui and future FFmpeg `rgba` input. Transparent
+pixels contain zero color. Export encoding is not implemented by this module.
+
+`OverlayAssets` explicitly prepares confined project PNG/JPEG/WebP images before
+rendering. The decoded cache is bound to one project, limited to 16 images/64 MiB,
+with encoded images at most 16 MiB and dimensions at most 4096 per axis. Images
+are contained in their card, preserving their complete evidence. Rendering only
+uses cached assets and performs no filesystem reads; callers clear/reload after
+changing project/image content. Preparation and first rendering belong on worker
+threads. Public renderer APIs contain no hardware, inference or network action.
+
+Approved snapshots carry serde-defaulted `OverlayMotion` and `HighlightStyle`.
+Entrance is 600 ms with 90 ms text-block staggering, the specified cubic easing
+and a 24px fade-up. Marker sweep, underline draw, bounded focus-line zoom and
+fade-rest use Unicode scalar highlight ranges mapped through shaped/wrapped
+lines. Reduced motion or Still presents the complete static state immediately,
+without movement, reveal or zoom. Subsequent AI review and insert/zoom editing
+can extend these content/renderer boundaries without a second UI renderer.

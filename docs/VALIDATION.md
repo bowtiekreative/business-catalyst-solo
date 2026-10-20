@@ -200,3 +200,51 @@ unsupported stub has not been cross-compiled here. Local import supports video
 containers; image import, inference, overlay rendering, final sequence export,
 YouTube and packaging belong to separate work. These tests do not declare the
 full studio or physical capture production-ready.
+
+## Shared overlay renderer core · milestone 5 · 2026-10-19
+
+Actually run with the project-local Rust 1.99.1 toolchain and cached dependencies:
+
+- Initial `cargo test --workspace --all-features --locked --offline`: **59 passed**,
+  two opt-in generated capture tests ignored. This preceded the coordinator's
+  concurrent capture-UI integration and the final focused renderer refinements.
+- `STORYFOLD_RENDERER_PROOF=1 cargo test -p video-core --all-features --locked --offline renderer::tests -- --nocapture --test-threads=2`:
+  **nine renderer tests passed** after layout, motion and overlap refinements.
+- `cargo clippy -p video-core --all-targets --all-features --locked --offline -- -D warnings`:
+  passed. Initial workspace lint found constant-chunk style warnings, corrected
+  using Rust 1.88-compatible array chunks. Final workspace verification belongs
+  after the concurrently edited native UI compiles.
+- Explicit generated capture suite rerun with `STORYFOLD_CAPTURE_TEST=1` and
+  `--ignored --test-threads=1`: both integrations passed with the extended
+  immutable content snapshots. No physical inputs were used.
+- `cargo fmt -p video-core -- --check` and `git diff --check`: passed at the core
+  checkpoint. The font and license SHA-256 hashes match the preserved provenance.
+- The final focused Unicode test and strict core lint passed again after adding
+  combining-mark/ligature cluster expansion, so a scalar selection inside one
+  shaped glyph remains visibly emphasized.
+
+Renderer checks cover all six types in both output shapes, all nine slots,
+readable text size/safe bounds, overflow errors, unsupported glyphs, Unicode
+scalar-to-wrapped-line highlights, static/reduced motion, all four emphasis modes,
+600ms/90ms timing, transparent half-open intervals, deterministic two-font-only
+output, bounded overlap, cached layouts, and straight-alpha bytes. They also
+verify that slot2 fired4.0s into take3 still renders the identical snapshot at4.0s
+when take3 moves first, despite a later slot edit. Removed and inactive cues do
+not render; active legacy kind-only cues report missing content. Asset checks
+cover explicit preparation, source removal after caching (no per-frame read),
+missing images, and Unix symlink/hardlink rejection.
+
+Generated-only proof images were produced under
+`/tmp/storyfold-overlay-proof-GbowwI/`: the contact sheet
+`six-types-both-shapes.png` and twelve full-size frames. The contact sheet and a
+full horizontal screenshot card were visually inspected; readable text and full
+contained images fit their cards. These are renderer PNG proofs, not screenshots
+of a completed capture/playback integration. Reproduce with the test command
+above; it prints a new disposable proof directory. Normal tests/app runs do not
+create those proof files.
+
+No actual FFmpeg overlay/export parity, native overlay playback, physical capture,
+Windows/platform CI, screen-reader use or production frame-rate measurement was
+performed for this milestone. AI review, image-import UI, inserts, sequence export,
+YouTube and packaging remain separate work. A shared raw RGBA path is implemented;
+that alone is not evidence of encoded-video parity or a complete application.

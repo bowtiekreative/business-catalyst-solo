@@ -102,6 +102,6 @@ AI, inserts, MP4 output and YouTube. The current Dioxus Storyfold application
 continues separately until this native implementation reaches feature parity.
 
 Inter font provenance and the SIL Open Font License are included under
-[`apps/sidebar-video/assets/fonts`](apps/sidebar-video/assets/fonts/README.md).
+[`packages/video-core/assets/fonts`](packages/video-core/assets/fonts/README.md).
 The existing Ubuntu/Windows workspace CI automatically includes both new members;
 platform success must be confirmed by an actual CI run.

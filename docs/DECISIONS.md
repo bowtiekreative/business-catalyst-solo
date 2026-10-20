@@ -179,3 +179,38 @@
 - Use the existing cached rfd0.17 native folder picker with the XDG portal backend.
   Creating/saving a draft selects a parent and the core reserves a unique new
   project child; no existing folder is reinitialized.
+
+## Shared overlay renderer · milestone 5
+
+- Use one tiny-skia/cosmic-text implementation for live snapshots, timeline cues
+  and later export callers. Return full project-size straight RGBA; texture
+  presentation scaling belongs to the UI. Explicitly unpremultiply tiny-skia
+  output so egui and FFmpeg can consume the same byte convention.
+- Preserve Storyfold violet `#7860b5` and ivory `#f7f6f2`, with the existing dark
+  ink/body text and readable 26–76px output font sizes. Keep all six layouts and
+  motion calculations in video-core. Long approved content returns an overflow
+  error instead of shrinking indefinitely, truncating or inventing text.
+- Move, rather than duplicate, the original Inter 4.1 files/OFL/provenance into
+  video-core. Expose bytes for the app's unchanged font setup. Add the already
+  cached fontdb0.16 dependency because cosmic-text's `new_with_fonts` still scans
+  host fonts; explicitly constructing its database avoids host-dependent fallback.
+  Unsupported characters report a useful error instead of substituting tofu or
+  an unbundled font. Platform pixel equality is not claimed without platform tests.
+- Add serde-defaulted motion/highlight enums to approved content, preserving old
+  project/manifest loading. Keep immutable captured snapshots. Defaults are FadeUp
+  and MarkerSweep. Still/reduced motion shows the static highlighted state without
+  motion. Marker/underline reveal follows the specified entrance easing; focus
+  zoom emphasizes the first highlighted line and stays within card padding.
+- Map Unicode scalar highlights to byte cursors only after shaping and line
+  wrapping. The copied source text remains unchanged, including line breaks.
+  Fade-rest keeps unhighlighted text at readable opacity rather than hiding it.
+- Load images explicitly into a bounded project-bound cache. Render from memory,
+  with no filesystem access per frame. Contain complete images instead of cropping
+  screenshot evidence. Image import UI and approval remain separate work; this
+  renderer does not grant an arbitrary-path or URL image loader to the UI.
+- Cache up to18 layouts and8192 raster glyph entries, limiting repeated shaping
+  while keeping memory bounded. Limit simultaneous composed layers to the nine
+  slots and surface excess overlap; never silently discard an active cue.
+- This checkpoint proves renderer behavior, not a finished capture/playback UI,
+  exported-video parity, AI review, inserts, YouTube or an installer. M7's zoom
+  editor remains separate from the small highlight-focus animation here.

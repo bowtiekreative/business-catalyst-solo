@@ -16,6 +16,22 @@ pub struct Highlight {
     pub start: usize,
     pub end: usize,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayMotion {
+    #[default]
+    FadeUp,
+    Still,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HighlightStyle {
+    #[default]
+    MarkerSweep,
+    UnderlineDraw,
+    ZoomToLine,
+    FadeRest,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OverlayContent {
@@ -25,8 +41,23 @@ pub struct OverlayContent {
     pub highlights: Vec<Highlight>,
     /// A project-owned image under media/, never a URL or arbitrary file path.
     pub image: Option<String>,
+    #[serde(default)]
+    pub motion: OverlayMotion,
+    #[serde(default)]
+    pub highlight_style: HighlightStyle,
 }
 impl OverlayContent {
+    pub fn new(kind: OverlayKind, title: impl Into<String>) -> Self {
+        Self {
+            kind,
+            title: title.into(),
+            blocks: Vec::new(),
+            highlights: Vec::new(),
+            image: None,
+            motion: OverlayMotion::default(),
+            highlight_style: HighlightStyle::default(),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         if self.title.trim().is_empty()
             || self.title.chars().count() > 200
@@ -95,6 +126,8 @@ mod tests {
                 end: 6,
             }],
             image: None,
+            motion: OverlayMotion::default(),
+            highlight_style: HighlightStyle::default(),
         };
         assert!(content.validate().is_ok());
         content.highlights[0].end = 7;

@@ -13,8 +13,8 @@ const MUTED: Color32 = Color32::from_rgb(107, 111, 121);
 const ACCENT: Color32 = Color32::from_rgb(120, 96, 181);
 const ACCENT_HOVER: Color32 = Color32::from_rgb(102, 80, 157);
 const HAIRLINE: Color32 = Color32::from_rgba_premultiplied(3, 3, 4, 41);
-const REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
-const SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
+const REGULAR: &[u8] = video_core::renderer::INTER_REGULAR;
+const SEMIBOLD: &[u8] = video_core::renderer::INTER_SEMIBOLD;
 
 fn strong(text: impl Into<String>, size: f32) -> RichText {
     RichText::new(text).font(FontId::new(size, FontFamily::Name("Inter 600".into())))

@@ -176,3 +176,33 @@ Git errors keep the in-memory draft. New/Open cannot overwrite concurrent draft
 edits while loading; Save can run during edits and acknowledges only its snapshot.
 All source writes and commits continue through the core's confinement and secret
 checks. The studio exposes no shell text field or automatic push.
+
+## Shared overlay rasterization · milestone 5
+
+Rendering is a pure in-memory operation after explicit asset preparation. It
+accepts validated approved content and the two supported project output sizes,
+not arbitrary filters, shell text, URLs or file paths. The immutable cue snapshot
+includes motion/highlight settings; mutable slot edits cannot alter an existing
+cue's rendered words. Legacy missing content remains an explicit error.
+
+Image preparation reuses ProjectStore ownership and Catalyst path confinement,
+rejecting traversal and linked/nonregular descendants. Only encoded PNG/JPEG/WebP
+is accepted, read through a bounded stream and decoded with dimension/allocation
+limits. The cache also enforces an aggregate decoded-byte limit. No image parser
+runs from a per-frame filesystem read. Preparation failures preserve already
+loaded assets. Changing projects requires clearing the cache, preventing a same-
+name image in one project from being substituted into another project's overlay.
+Explicit reload is required after changing a cached image file.
+
+Only bundled licensed Inter 400/600 faces are loaded; no host-font discovery or
+runtime font download is used. Unsupported characters, missing images, overflowing
+text and more than nine overlapping overlays produce visible caller errors.
+Copied text is never silently shortened to satisfy the geometry. Resource limits
+bound decoded images, active layers, cached layouts and raster glyph entries;
+these are image/frame limits, not interview-duration limits. Filesystem race and
+cross-platform caveats in the project-safety sections continue to apply.
+
+The raw frame contract is straight RGBA with zero color in transparent pixels.
+No video encoder, export write, AI provider, network client or upload is introduced
+by this renderer. Generated proof PNGs are an explicit unit-test-only option;
+they never appear as a real camera, user photo or approved project content.

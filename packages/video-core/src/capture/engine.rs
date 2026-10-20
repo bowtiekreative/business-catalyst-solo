@@ -1178,6 +1178,8 @@ mod tests {
             }],
             highlights: Vec::new(),
             image: None,
+            motion: crate::OverlayMotion::default(),
+            highlight_style: crate::HighlightStyle::default(),
         }
     }
     fn frame_bytes(path: &Path, frame: u64) -> Vec<u8> {
