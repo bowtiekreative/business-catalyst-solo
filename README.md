@@ -2,7 +2,8 @@
 
 A native Rust control panel for one local website. Both the desktop UI and the
 core are Rust. The original Catalyst brief and HTML prototype ship in `handoff/`.
-This repository is independent of Storyfold.
+The workspace also contains a separate Storyfold-branded Sidebar Video foundation.
+It does not replace the working Storyfold desktop app.
 
 ## Run
 
@@ -79,3 +80,28 @@ tracked in [ROADMAP.md](ROADMAP.md). No API key is needed for the starter.
 
 See [architecture](docs/ARCHITECTURE.md), [security boundaries](docs/SECURITY.md)
 and [implementation decisions](docs/DECISIONS.md).
+
+## Sidebar Video · milestone 1
+
+```sh
+cargo run -p sidebar-video
+```
+
+This opens a native Storyfold-branded Record studio layout with bundled Inter
+400/600 fonts, a real in-memory name and shape switch, nine empty overlay slots,
+a take bin, camera stage and empty clip/overlay tracks. Export, recording,
+imports, clip tools and the local AI builder are visibly disabled and labelled
+as later milestones. It makes no inference, network or device requests, opens no
+project folder, and writes no project files. Name and shape changes last only
+for the current window.
+
+`packages/video-core` owns output geometry, validated slot identities and studio
+settings; `apps/sidebar-video` draws and forwards events. Later milestones add
+project/timeline operations, recording, a shared preview/export renderer, local
+AI, inserts, MP4 output and YouTube. The current Dioxus Storyfold application
+continues separately until this native implementation reaches feature parity.
+
+Inter font provenance and the SIL Open Font License are included under
+[`apps/sidebar-video/assets/fonts`](apps/sidebar-video/assets/fonts/README.md).
+The existing Ubuntu/Windows workspace CI automatically includes both new members;
+platform success must be confirmed by an actual CI run.

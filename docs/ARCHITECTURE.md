@@ -24,3 +24,27 @@ The starter opens an explicitly entered folder in a native desktop window. Nativ
 folder selection, structured page/section operations, provider helpers, automatic
 push, host publishing, rollback and ongoing site care remain roadmap items.
 No production milestone or remote CI result is implied by this scaffold.
+
+## Sidebar Video foundation
+
+Milestone 1 adds two independent members without changing Catalyst's scanner,
+review, Git or existing desktop behavior:
+
+- `apps/sidebar-video`: native Storyfold-branded egui/eframe Record studio.
+  It draws the header, working shape/name settings, take bin, empty stage,
+  disabled 88 px Record button, nine empty overlay slots and sequence/cue tracks.
+- `packages/video-core`: in-memory studio settings, exact 1920×1080 / 1080×1920
+  geometry, bounded slot identities and overlay-kind vocabulary. The app forwards
+  settings changes here; the core reuses `catalyst_core::check_secrets` for names.
+- `apps/sidebar-video/assets/fonts`: unmodified Inter 4.1 Regular/SemiBold TTFs,
+  upstream SIL OFL text and source/hash provenance, embedded without font requests.
+
+The new app has no backend, device handles, file store, Git repository,
+subprocesses, model connection or network client. No fake takes, camera picture,
+overlay generation or export is presented as operational. Settings are ephemeral.
+
+Later milestones put timeline, capture, the shared RGBA overlay renderer, export
+and local AI clients in `video-core`, with worker-thread channels to the UI when
+needed. They must add their own invariant and integration evidence. The existing
+Storyfold Dioxus application remains the working product until feature parity;
+this foundation is a separate executable and is not installed over it.

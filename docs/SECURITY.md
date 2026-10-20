@@ -40,3 +40,29 @@ successful commit reports the commit; inspect Git before retrying.
 
 The bundled HTML prototype is reference material. Its external browser resources,
 sample claims and optional JavaScript helpers are not trusted Rust runtime code.
+
+## Sidebar Video milestone 1
+
+The separate `sidebar-video` executable opens no project, camera or microphone,
+executes no subprocess, contacts no service (including localhost models), reads
+no credentials and has no persistence. Only its in-memory name and orientation
+controls are active. Names use Catalyst's public `check_secrets`; rejected names
+leave the last valid core value intact. Bundled font data is compiled into the
+executable, with no runtime font download.
+
+Future project persistence must reuse Catalyst's confinement/private-folder
+patterns and credential scanner rather than copying implementations. Confinement
+and private-directory helpers are currently crate-private; their later reuse
+needs a reviewed shared API before video writes are introduced. This milestone
+does not expose or change those APIs and does not claim filesystem invariants
+that have not been implemented.
+
+Later capture, local model calls, web screenshots, exports, project Git and
+YouTube need explicit actions, cancellation, constrained paths and dedicated
+validation. Local AI is the confirmed direction; no cloud provider/key or paid
+budget flow is added here. Local inference can still disclose content to a
+separate local process, so it must remain explicit when implemented.
+
+The optional `validation-screenshot` feature enables eframe's existing
+`EFRAME_SCREENSHOT_TO` validation output. Only an explicit test launch supplies
+that path; it is not a project-save feature and normal builds do not enable it.

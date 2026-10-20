@@ -1,0 +1,12 @@
+[package]
+name = "sidebar-video"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+validation-screenshot = ["eframe/__screenshot"]
+
+[dependencies]
+video-core.workspace = true
+eframe = { version = "=0.33.0", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
