@@ -248,3 +248,23 @@ Windows/platform CI, screen-reader use or production frame-rate measurement was
 performed for this milestone. AI review, image-import UI, inserts, sequence export,
 YouTube and packaging remain separate work. A shared raw RGBA path is implemented;
 that alone is not evidence of encoded-video parity or a complete application.
+
+### Cached overlay frame cost · 2026-10-19
+
+An opt-in generated benchmark prepares images, fonts, layouts and glyphs before
+measuring30 animated1920×1080 frames with one screenshot card and two text cards.
+The timed loop performs no file reads. Run the ignored
+`renderer::tests::cached_1080p_three_card_timing` test with `--nocapture` in both
+normal and `--release` profiles. On this workstation, one run measured:
+
+| Profile | Mean | Median | p95 | Maximum | Throughput |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Debug |2717.231ms|2712.232ms|2842.515ms|2850.814ms|0.37fps|
+| Release |70.656ms|70.932ms|79.057ms|83.414ms|14.15fps|
+
+Both explicit benchmark tests passed; these numbers are evidence of cost, not a
+performance acceptance pass. Even release exceeds the33.33ms budget for30fps
+native overlays. Keep the preview worker/queue bounded, report this limitation,
+and measure a scoped optimization before promising smooth30fps card animation.
+No performance optimization was included in the renderer correctness checkpoint.
+The benchmark remains ignored by ordinary test runs.

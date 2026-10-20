@@ -642,3 +642,61 @@ fn all_nine_slots_use_snapshots_and_overlapping_work_has_a_visible_resource_boun
             .contains("nine overlays")
     );
 }
+
+#[test]
+#[ignore = "Explicit generated-only cached renderer performance measurement"]
+fn cached_1080p_three_card_timing() {
+    let (_temp, store) = project_image();
+    let mut assets = OverlayAssets::new();
+    let cards = [
+        content(OverlayKind::ScreenshotCard),
+        content(OverlayKind::LowerThird),
+        content(OverlayKind::Quote),
+    ];
+    for card in &cards {
+        assets.load_content(&store, card).unwrap();
+    }
+    let mut renderer = OverlayRenderer::new().unwrap();
+    let mut active: Vec<_> = cards
+        .iter()
+        .map(|content| ActiveOverlay {
+            content,
+            elapsed_ms: 1200,
+            duration_ms: 5000,
+        })
+        .collect();
+    let size = Orientation::Horizontal.output_size();
+    // Decode/load/shape/raster warmup happens before the timed filesystem-free loop.
+    std::hint::black_box(
+        renderer
+            .render_live(size, &active, &assets, RenderOptions::default())
+            .unwrap(),
+    );
+    let mut times = Vec::new();
+    for frame in 0..30 {
+        for overlay in &mut active {
+            overlay.elapsed_ms = 1 + frame * 20;
+        }
+        let start = std::time::Instant::now();
+        let rgba = renderer
+            .render_live(size, &active, &assets, RenderOptions::default())
+            .unwrap();
+        std::hint::black_box(rgba);
+        times.push(start.elapsed().as_secs_f64() * 1000.);
+    }
+    let total: f64 = times.iter().sum();
+    times.sort_by(f64::total_cmp);
+    println!(
+        "cached-render profile={} size=1920x1080 cards=3 frames=30 mean_ms={:.3} median_ms={:.3} p95_ms={:.3} max_ms={:.3} fps={:.2}",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+        total / 30.,
+        (times[14] + times[15]) / 2.,
+        times[28],
+        times[29],
+        30000. / total
+    );
+}
