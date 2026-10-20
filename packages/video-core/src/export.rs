@@ -1,7 +1,7 @@
 //! Explicit, cancellable sequence MP4 export. Call from a worker, retaining the
 //! ProjectStore baseline from job start. No camera, inference, network or upload.
 mod pipeline;
-mod process;
+pub(crate) mod process;
 
 use crate::{
     Orientation, OutputSize, ProjectStore, Result, SaveVersion, Studio,

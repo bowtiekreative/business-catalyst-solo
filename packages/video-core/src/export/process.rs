@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) type Writer = Box<dyn FnOnce(ChildStdin) -> Result<()> + Send + 'static>;
+pub(crate) type Writer = Box<dyn FnOnce(ChildStdin) -> Result<()> + Send + 'static>;
 #[derive(Default)]
 struct State {
     out_us: AtomicU64,
@@ -35,7 +35,7 @@ impl Drop for Running {
         }
     }
 }
-pub(super) fn run(
+pub(crate) fn run(
     command: &mut Command,
     writer: Option<Writer>,
     heartbeat: Arc<AtomicU64>,

@@ -238,3 +238,46 @@ also preserves saved JSON and the MP4, and is reported separately from successfu
 media creation. UI code must retain the submitted snapshot baseline on an ack,
 not overwrite newer edits with it. Export introduces no upload, inference or
 background network action.
+
+## Visual inserts · milestone 7
+
+Insert JSON accepts a project-relative media path, typed placement/zoom, integer
+centers/percent and positive duration. It accepts no remote URL, filter expression,
+shell command or arbitrary output path. Existing content credential scanning and
+project/snapshot byte bounds remain. Storage now validates every media_paths()
+reference, including immutable Removed cues, through existing link/confinement rules.
+
+Video import reuses explicit file import and preserves original media. Proxy creation
+uses a unique confined PendingFile, fixed local-file FFmpeg flags, actual progress,
+cancel/timeout and source metadata checks before no-clobber publication. Canonical
+metadata bounds one square-pixel/muted30fps H.264 track, even axes and1920px maximum
+axis. Invalid input is refused or must be explicitly prepared; unsupported audio
+mixing is not silently introduced. No camera, inference, network or upload occurs.
+
+Only one visual insert can overlap. Image cache limits are unchanged. Raw decoder
+frames are at most16MiB, with one current frame, one queued frame and one producer
+buffer per decoder; prepared premultiplied insert memory is also bounded. Diagnostics
+are drained with a65KiB ceiling, and stalled requests have a30s timeout. Cancellation,
+seek, clear and Drop kill/reap children, close the frame receiver and join readers.
+A cancelled or changed source never silently reuses an earlier successful frame.
+
+Asset preparation is explicit and worker-only. Scene rendering and source thumbnails
+read prepared memory only. Source fingerprints and project baselines are rechecked
+before MP4 publication/save, preserving M8's output/version failure behavior. Existing
+filesystem race, post-rename flush and platform caveats remain. Behind is an opaque
+camera card, with no claim of person segmentation, matte handling or background removal.
+
+Scene parallel rasterization uses no unsafe aliasing: scoped workers receive
+separate scratch Pixmaps and share read-only source bytes. At most four reusable
+output-sized rasters add about31.7MiB at full HD, independent of video duration.
+Threads join before rows are copied back. Validated snapshot caches hold at most
+18 complete definitions and compare every field before reuse; changed secret text
+or invalid zoom remains an error. The compositor's integer alpha rounding is
+checked against the pinned library, including translucent destination cases.
+
+A generated regression demonstrated that extension checks alone allowed a renamed
+ffconcat file to follow a normal-name symlink outside the selected folder. Generic
+video probes/normalization now allow only the supported self-contained container
+demuxers, while canonical insert/sequence playback explicitly selects MOV/MP4.
+Private app-generated concat manifests retain their intentional fixed concat path.
+This closes that content-based bypass without relying on a filename extension.

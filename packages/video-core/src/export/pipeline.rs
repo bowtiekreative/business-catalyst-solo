@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     MediaId, OverlayContent,
+    insert::{self, InsertSource},
     renderer::{ActiveOverlay, OverlayAssets, OverlayRenderer, RenderOptions},
 };
 use catalyst_core::local::{PendingFile, PrivateNamespace, WriteExpected};
@@ -54,6 +55,12 @@ struct ClipInput {
     duration_ms: u64,
     frames: u64,
     has_audio: bool,
+    source_size: OutputSize,
+}
+struct SourceInput {
+    path: PathBuf,
+    info: media::MediaInfo,
+    size: OutputSize,
 }
 struct Prepared {
     inputs: Vec<ClipInput>,
@@ -177,6 +184,7 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
     let mut work = WorkDir::new(store)?;
     let mut video_list = String::from("ffconcat version 1.0\n");
     let mut audio_list = String::from("ffconcat version 1.0\n");
+    let scene = schedule.iter().any(|cue| cue.content.insert.is_some());
     let mut prepared_ms = 0;
     for (index, input) in inputs.iter().enumerate() {
         cancel.check()?;
@@ -184,7 +192,7 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
         let audio_name = format!("clip-{index:05}.wav");
         let video = work.file(video_name.clone())?;
         let audio = work.file(audio_name.clone())?;
-        let mut command = normalize_command(input, plan.size, &video, &audio)?;
+        let mut command = normalize_command(input, plan.size, &video, &audio, scene)?;
         let duration = frame_ms(input.frames);
         process::run(
             &mut command,
@@ -215,10 +223,32 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
     let writer_cancel = cancel.clone();
     let frame_snapshot = snapshot.clone();
     let frame_plan = plan.clone();
+    let scene_video_list = video_list.clone();
+    let camera_ranges: Vec<_> = if scene {
+        inputs
+            .iter()
+            .map(|input| Ok((input.frames, camera_fit(input.source_size, plan.size)?)))
+            .collect::<Result<_>>()?
+    } else {
+        Vec::new()
+    };
     let writer: process::Writer = Box::new(move |mut input| {
         let mut renderer = OverlayRenderer::new()?;
         let mut assets = OverlayAssets::new();
         let mut last_active = Vec::new();
+        let mut camera_decoder = if scene {
+            Some(insert::FrameReader::spawn(
+                &mut camera_decode_command(&scene_video_list)?,
+                frame_plan.size,
+                0,
+            )?)
+        } else {
+            None
+        };
+        let (mut camera_index, mut camera_end) = (
+            0_usize,
+            camera_ranges.first().map_or(0, |(frames, _)| *frames),
+        );
         for frame in 0..frame_plan.frames {
             writer_cancel.check()?;
             let ms = frame_ms(frame);
@@ -235,14 +265,44 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
                 }
                 last_active = active;
             }
-            let rgba = renderer.render_timeline(
-                &frame_snapshot,
-                ms,
-                &assets,
-                RenderOptions {
-                    reduced_motion: options.reduced_motion,
-                },
-            )?;
+            let render_options = RenderOptions {
+                reduced_motion: options.reduced_motion,
+            };
+            let rgba = if let Some(decoder) = &mut camera_decoder {
+                while frame >= camera_end {
+                    camera_index += 1;
+                    camera_end = camera_end
+                        .checked_add(
+                            camera_ranges
+                                .get(camera_index)
+                                .ok_or("Camera sequence ended before its output frame")?
+                                .0,
+                        )
+                        .ok_or("Camera frame count overflows")?;
+                }
+                let camera = crop_camera(
+                    decoder.frame_at(frame, &writer_cancel)?,
+                    camera_ranges[camera_index].1,
+                )?;
+                let overlays: Vec<_> = last_active
+                    .iter()
+                    .map(|&index| ActiveOverlay {
+                        content: &schedule[index].content,
+                        elapsed_ms: ms - schedule[index].start,
+                        duration_ms: schedule[index].end - schedule[index].start,
+                    })
+                    .collect();
+                assets.prepare_live(&asset_store, &overlays, &writer_cancel)?;
+                renderer.render_scene_live(
+                    frame_plan.size,
+                    &camera,
+                    &overlays,
+                    &assets,
+                    render_options,
+                )?
+            } else {
+                renderer.render_timeline(&frame_snapshot, ms, &assets, render_options)?
+            };
             input
                 .write_all(&rgba.pixels)
                 .map_err(|_| "Export frame stream closed before all frames were written")?;
@@ -250,7 +310,7 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
         }
         Ok(())
     });
-    let mut command = final_command(&video_list, &audio_list, pending.path(), &plan)?;
+    let mut command = final_command(&video_list, &audio_list, pending.path(), &plan, scene)?;
     process::run(
         &mut command,
         Some(writer),
@@ -353,8 +413,16 @@ fn preflight(
     plan: &ExportPlan,
     cancel: &Cancellation,
 ) -> Result<Prepared> {
+    let active_clip_ids: std::collections::HashSet<_> =
+        snapshot.clips().iter().map(|clip| clip.id()).collect();
+    let has_scene = snapshot.cues().iter().any(|cue| {
+        active_clip_ids.contains(&cue.clip_id())
+            && cue
+                .content()
+                .is_some_and(|content| content.insert.is_some())
+    });
     let mut fingerprints = HashMap::new();
-    let mut sources: HashMap<MediaId, (PathBuf, media::MediaInfo)> = HashMap::new();
+    let mut sources: HashMap<MediaId, SourceInput> = HashMap::new();
     let mut inputs = Vec::new();
     let mut starts = HashMap::new();
     let mut ms = 0_u64;
@@ -376,12 +444,20 @@ fn preflight(
             )?;
             fingerprints.insert(path.clone(), Fingerprint::read(&path)?);
             let info = media::probe_owned(&path, cancel)?;
-            entry.insert((path, info));
+            let size = if has_scene {
+                camera_display_size(&path, &info, cancel)?
+            } else {
+                OutputSize {
+                    width: info.width,
+                    height: info.height,
+                }
+            };
+            entry.insert(SourceInput { path, info, size });
         }
-        let (path, info) = sources
+        let source = sources
             .get(&clip.source_id())
             .ok_or("Clip source was not prepared")?;
-        if clip.out_ms() > info.duration_ms.saturating_add(34) {
+        if clip.out_ms() > source.info.duration_ms.saturating_add(34) {
             return Err(
                 "A clip extends beyond its actual source video; trim it before exporting".into(),
             );
@@ -391,16 +467,18 @@ fn preflight(
             .ok_or("Sequence duration overflows")?;
         let end = frame_count(ms)?;
         inputs.push(ClipInput {
-            path: path.clone(),
+            path: source.path.clone(),
             in_ms: clip.in_ms(),
             duration_ms: clip.duration_ms(),
             frames: end - previous,
-            has_audio: info.has_audio,
+            has_audio: source.info.has_audio,
+            source_size: source.size,
         });
         previous = end;
     }
     let mut schedule = Vec::new();
     let mut edges = Vec::new();
+    let mut insert_edges = Vec::new();
     let mut renderer = OverlayRenderer::new()?;
     let mut assets = OverlayAssets::new();
     for cue in snapshot.cues() {
@@ -417,7 +495,7 @@ fn preflight(
         let content = cue
             .content()
             .ok_or("A sequence cue has no approved overlay content")?;
-        if let Some(relative) = &content.image {
+        for relative in content.media_paths() {
             let path = local::confined_file(
                 store.root(),
                 relative,
@@ -430,18 +508,49 @@ fn preflight(
         }
         assets.clear();
         assets.load_content(store, content)?;
-        renderer.render_live(
-            plan.size,
-            &[ActiveOverlay {
-                content,
-                elapsed_ms: 0,
-                duration_ms: 1,
-            }],
-            &assets,
-            RenderOptions {
-                reduced_motion: true,
-            },
-        )?;
+        let active = [ActiveOverlay {
+            content,
+            elapsed_ms: 0,
+            duration_ms: cue.duration_ms(),
+        }];
+        if let Some(insert) = &content.insert {
+            if let InsertSource::Video { path, .. } = &insert.source {
+                let video = insert::probe_video(store, path, cancel)?;
+                if insert
+                    .source_frame(cue.duration_ms() - 1)?
+                    .ok_or("Missing insert source frame")?
+                    >= video.frames
+                {
+                    return Err("A video insert extends beyond its last frame; shorten the cue before exporting".into());
+                }
+            }
+            insert_edges.push((start, 1_i32));
+            insert_edges.push((end, -1_i32));
+            assets.prepare_live(store, &active, cancel)?;
+            let camera = crate::renderer::RgbaFrame {
+                width: 16,
+                height: 9,
+                pixels: [0, 0, 0, 255].repeat(16 * 9),
+            };
+            renderer.render_scene_live(
+                plan.size,
+                &camera,
+                &active,
+                &assets,
+                RenderOptions {
+                    reduced_motion: true,
+                },
+            )?;
+        } else {
+            renderer.render_live(
+                plan.size,
+                &active,
+                &assets,
+                RenderOptions {
+                    reduced_motion: true,
+                },
+            )?;
+        }
         schedule.push(Scheduled {
             start,
             end,
@@ -458,6 +567,14 @@ fn preflight(
             return Err(
                 "More than nine sequence overlays overlap; shorten or move their cues".into(),
             );
+        }
+    }
+    insert_edges.sort_unstable();
+    let mut visible = 0;
+    for (_, change) in insert_edges {
+        visible += change;
+        if visible > 1 {
+            return Err("Two visual inserts overlap; move or shorten one before exporting".into());
         }
     }
     Ok(Prepared {
@@ -497,10 +614,18 @@ fn normalize_command(
     size: OutputSize,
     video: &Path,
     audio: &Path,
+    scene: bool,
 ) -> Result<Command> {
     let mut command = base()?;
     command
-        .args(["-n", "-protocol_whitelist", "file,pipe", "-ss"])
+        .args([
+            "-n",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-format_whitelist",
+            media::VIDEO_DEMUXERS,
+            "-ss",
+        ])
         .arg(milliseconds(input.in_ms))
         .arg("-t")
         .arg(milliseconds(input.duration_ms))
@@ -514,9 +639,20 @@ fn normalize_command(
         .frames
         .checked_mul(1600)
         .ok_or("Audio sample count overflows")?;
+    let geometry = if scene {
+        let fit = camera_fit(input.source_size, size)?;
+        format!(
+            "scale={}:{},pad={}:{}:{}:{}",
+            fit.width, fit.height, size.width, size.height, fit.x, fit.y
+        )
+    } else {
+        format!(
+            "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{}",
+            size.width, size.height, size.width, size.height
+        )
+    };
     let filter = format!(
-        "[0:v:0]setpts=PTS-STARTPTS,fps=30,scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},setsar=1,tpad=stop_mode=clone:stop_duration=1[v];[{audio_stream}]asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=end_sample={samples}[a]",
-        size.width, size.height, size.width, size.height
+        "[0:v:0]setpts=PTS-STARTPTS,fps=30,{geometry},setsar=1,tpad=stop_mode=clone:stop_duration=1[v];[{audio_stream}]asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=end_sample={samples}[a]"
     );
     command
         .arg("-filter_complex")
@@ -567,20 +703,24 @@ fn final_command(
     audio_list: &Path,
     output: &Path,
     plan: &ExportPlan,
+    scene: bool,
 ) -> Result<Command> {
     let mut command = base()?;
+    command.arg("-y");
+    if !scene {
+        command
+            .args([
+                "-protocol_whitelist",
+                "file,pipe",
+                "-f",
+                "concat",
+                "-safe",
+                "1",
+                "-i",
+            ])
+            .arg(video_list);
+    }
     command
-        .args([
-            "-y",
-            "-protocol_whitelist",
-            "file,pipe",
-            "-f",
-            "concat",
-            "-safe",
-            "1",
-            "-i",
-        ])
-        .arg(video_list)
         .args([
             "-protocol_whitelist",
             "file,pipe",
@@ -594,17 +734,21 @@ fn final_command(
     command
         .args(["-f", "rawvideo", "-pixel_format", "rgba", "-video_size"])
         .arg(format!("{}x{}", plan.size.width, plan.size.height))
-        .args([
-            "-framerate",
-            "30",
-            "-i",
-            "pipe:0",
+        .args(["-framerate", "30", "-i", "pipe:0"]);
+    if scene {
+        command.args(["-map", "1:v:0", "-map", "0:a:0"]);
+    } else {
+        command.args([
             "-filter_complex",
             "[0:v:0][2:v:0]overlay=0:0:shortest=1:alpha=straight:format=auto,format=yuv420p[v]",
             "-map",
             "[v]",
             "-map",
             "1:a:0",
+        ]);
+    }
+    command
+        .args([
             "-c:v",
             "libx264",
             "-preset",
@@ -639,6 +783,155 @@ fn final_command(
             "mp4",
         ])
         .arg(output);
+    Ok(command)
+}
+fn camera_display_size(
+    path: &Path,
+    info: &media::MediaInfo,
+    cancel: &Cancellation,
+) -> Result<OutputSize> {
+    let output = media::run_bounded(
+        Command::new(media::tool("ffprobe")?)
+            .args([
+                "-v",
+                "error",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-format_whitelist",
+                media::VIDEO_DEMUXERS,
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=sample_aspect_ratio:stream_side_data=rotation",
+                "-of",
+                "json",
+            ])
+            .arg(path),
+        Duration::from_secs(30),
+        cancel,
+        65536,
+    )?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|_| "Invalid camera display metadata")?;
+    let stream = value["streams"]
+        .as_array()
+        .and_then(|v| v.first())
+        .ok_or("Missing camera display metadata")?;
+    let sar = match stream["sample_aspect_ratio"].as_str() {
+        None | Some("N/A" | "0:1") => 1.,
+        Some(value) => {
+            let (a, b) = value.split_once(':').ok_or("Invalid camera pixel aspect")?;
+            let a = a.parse::<u32>()?;
+            let b = b.parse::<u32>()?;
+            if a == 0 || b == 0 {
+                return Err("Invalid camera pixel aspect".into());
+            }
+            f64::from(a) / f64::from(b)
+        }
+    };
+    let rotation = stream["side_data_list"]
+        .as_array()
+        .and_then(|list| list.iter().find_map(|item| item["rotation"].as_i64()))
+        .unwrap_or(0)
+        .rem_euclid(360);
+    let (mut width, mut height) = (
+        (f64::from(info.width) * sar).round(),
+        f64::from(info.height),
+    );
+    if rotation == 90 || rotation == 270 {
+        std::mem::swap(&mut width, &mut height);
+    } else if rotation != 0 && rotation != 180 {
+        return Err("Camera video has a non-right-angle display rotation; normalize it before adding an insert".into());
+    }
+    if !(1.0..=16384.0).contains(&width) || !(1.0..=16384.0).contains(&height) {
+        return Err("Camera display geometry exceeds its pixel resource limit".into());
+    }
+    Ok(OutputSize {
+        width: width as u32,
+        height: height as u32,
+    })
+}
+#[derive(Clone, Copy, Debug)]
+struct CameraFit {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+fn camera_fit(source: OutputSize, output: OutputSize) -> Result<CameraFit> {
+    insert::dimensions(source)?;
+    let scale = (f64::from(output.width) / f64::from(source.width))
+        .min(f64::from(output.height) / f64::from(source.height));
+    let width = ((f64::from(source.width) * scale / 2.).floor() as u32 * 2)
+        .max(2)
+        .min(output.width);
+    let height = ((f64::from(source.height) * scale / 2.).floor() as u32 * 2)
+        .max(2)
+        .min(output.height);
+    Ok(CameraFit {
+        x: (output.width - width) / 4 * 2,
+        y: (output.height - height) / 4 * 2,
+        width,
+        height,
+    })
+}
+fn crop_camera(
+    frame: &crate::renderer::RgbaFrame,
+    fit: CameraFit,
+) -> Result<crate::renderer::RgbaFrame> {
+    if fit.x + fit.width > frame.width || fit.y + fit.height > frame.height {
+        return Err("Camera content lies outside the normalized frame".into());
+    }
+    let mut pixels = Vec::with_capacity(fit.width as usize * fit.height as usize * 4);
+    for y in fit.y..fit.y + fit.height {
+        let start = (y as usize * frame.width as usize + fit.x as usize) * 4;
+        let end = start + fit.width as usize * 4;
+        pixels.extend_from_slice(
+            frame
+                .pixels
+                .get(start..end)
+                .ok_or("Incomplete normalized camera frame")?,
+        );
+    }
+    Ok(crate::renderer::RgbaFrame {
+        width: fit.width,
+        height: fit.height,
+        pixels,
+    })
+}
+fn camera_decode_command(list: &Path) -> Result<Command> {
+    let mut command = Command::new(media::tool("ffmpeg")?);
+    command
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-threads",
+            "2",
+            "-filter_threads",
+            "1",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-f",
+            "concat",
+            "-safe",
+            "1",
+            "-i",
+        ])
+        .arg(list)
+        .args([
+            "-map",
+            "0:v:0",
+            "-an",
+            "-pix_fmt",
+            "rgba",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]);
     Ok(command)
 }
 fn verify_output(path: &Path, plan: &ExportPlan, cancel: &Cancellation) -> Result<()> {

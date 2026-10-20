@@ -301,6 +301,17 @@ impl Drop for CutWorker {
     }
 }
 
+// Capture settings validate positive, supported source dimensions before spawn.
+// Keep the natural aspect and avoid upscaling smaller cameras or adding bars.
+fn preview_dimensions(mode: CameraMode) -> (u32, u32) {
+    let mut height = u64::from(mode.height.min(PREVIEW_HEIGHT));
+    let mut width = u64::from(mode.width) * height / u64::from(mode.height);
+    if width > u64::from(PREVIEW_WIDTH) {
+        width = u64::from(PREVIEW_WIDTH);
+        height = u64::from(mode.height) * width / u64::from(mode.width);
+    }
+    ((width as u32) & !1, (height as u32) & !1)
+}
 fn spawn_camera(
     root: &Path,
     manifest: &Manifest,
@@ -308,6 +319,7 @@ fn spawn_camera(
     shared: Arc<Shared>,
 ) -> Result<CameraProcess> {
     let settings = &manifest.settings;
+    let (preview_width, preview_height) = preview_dimensions(settings.mode);
     let directory = local::existing_directory(root, &manifest.relative())?;
     let mut command = FfmpegCommand::new_with_path(media::tool("ffmpeg")?);
     command.as_inner_mut().current_dir(&directory);
@@ -349,10 +361,72 @@ fn spawn_camera(
     } else if let Some(microphone) = &settings.microphone_id {
         command.args(["-thread_queue_size", "256", "-f", "pulse", "-i", microphone]);
     }
-    command.args(["-filter_complex","[0:v]fps=30,setpts=N/(30*TB),split=2[vrec][vp];[vp]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=rgba[preview];[1:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a]",
-        "-map","[vrec]","-map","[a]","-c:v","libx264","-threads","2","-preset","veryfast","-tune","zerolatency","-crf","20","-pix_fmt","yuv420p","-profile:v","high","-g","30","-keyint_min","30","-sc_threshold","0","-bf","0",
-        "-c:a","aac","-b:a","160k","-ar","48000","-ac","2","-f","segment","-segment_format","mpegts","-segment_time","1","-segment_time_delta","0.016667","-reset_timestamps","1","-segment_list","segments.csv","-segment_list_type","csv","-segment_list_size","0","segment-%09d.ts",
-        "-map","[preview]","-an","-c:v","rawvideo","-threads","1","-pix_fmt","rgba","-f","rawvideo","pipe:1"]);
+    command.arg("-filter_complex").arg(format!("[0:v]fps=30,setpts=N/(30*TB),split=2[vrec][vp];[vp]scale={preview_width}:{preview_height},format=rgba[preview];[1:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a]"));
+    command.args([
+        "-map",
+        "[vrec]",
+        "-map",
+        "[a]",
+        "-c:v",
+        "libx264",
+        "-threads",
+        "2",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "zerolatency",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "high",
+        "-g",
+        "30",
+        "-keyint_min",
+        "30",
+        "-sc_threshold",
+        "0",
+        "-bf",
+        "0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-f",
+        "segment",
+        "-segment_format",
+        "mpegts",
+        "-segment_time",
+        "1",
+        "-segment_time_delta",
+        "0.016667",
+        "-reset_timestamps",
+        "1",
+        "-segment_list",
+        "segments.csv",
+        "-segment_list_type",
+        "csv",
+        "-segment_list_size",
+        "0",
+        "segment-%09d.ts",
+        "-map",
+        "[preview]",
+        "-an",
+        "-c:v",
+        "rawvideo",
+        "-threads",
+        "1",
+        "-pix_fmt",
+        "rgba",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    ]);
     let mut child = command
         .spawn()
         .map_err(|_| "System FFmpeg could not start capture")?;
@@ -362,7 +436,7 @@ fn spawn_camera(
         .ok_or("Missing camera diagnostic output")?;
     let frames_shared = shared;
     let frames = thread::spawn(move || {
-        let length = (PREVIEW_WIDTH * PREVIEW_HEIGHT * 4) as usize;
+        let length = (preview_width * preview_height * 4) as usize;
         let mut sequence = 0_u64;
         loop {
             let mut rgba = vec![0_u8; length];
@@ -372,8 +446,8 @@ fn spawn_camera(
             let frame = Arc::new(PreviewFrame {
                 sequence,
                 media_ms: frame_ms(sequence),
-                width: PREVIEW_WIDTH,
-                height: PREVIEW_HEIGHT,
+                width: preview_width,
+                height: preview_height,
                 rgba,
             });
             frames_shared
@@ -1150,6 +1224,52 @@ fn count_frames(source: &Path, cancel: &Cancellation) -> Result<u64> {
 #[cfg(all(test, target_os = "linux", feature = "capture-test"))]
 mod tests {
     use super::*;
+    #[test]
+    fn preview_bounds_preserve_camera_aspect_without_upscaling() {
+        for (width, height, expected) in [
+            (1920, 1080, (1280, 720)),
+            (1280, 720, (1280, 720)),
+            (640, 480, (640, 480)),
+            (640, 360, (640, 360)),
+        ] {
+            assert_eq!(
+                preview_dimensions(CameraMode {
+                    width,
+                    height,
+                    ..CameraMode::default()
+                }),
+                expected
+            );
+        }
+    }
+    #[cfg(feature = "capture-test")]
+    #[test]
+    #[ignore = "Explicit generated4:3 preview framing; requires STORYFOLD_CAPTURE_TEST=1, no hardware"]
+    fn generated_preview_retains_natural_four_three_geometry() {
+        assert_eq!(std::env::var("STORYFOLD_CAPTURE_TEST").as_deref(), Ok("1"));
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _) = ProjectStore::create(temp.path().join("project"), "Generated4:3").unwrap();
+        let session = CaptureSession::start_generated(
+            &store,
+            CaptureSettings {
+                mode: CameraMode {
+                    width: 640,
+                    height: 480,
+                    ..CameraMode::default()
+                },
+                ..CaptureSettings::default()
+            },
+        )
+        .unwrap();
+        wait(&session, Duration::from_secs(10), |s| {
+            s.phase == CapturePhase::Ready
+        });
+        let frame = session.latest_preview().unwrap();
+        assert_eq!((frame.width, frame.height), (640, 480));
+        assert_eq!(frame.rgba.len(), 640 * 480 * 4);
+        session.stop().unwrap();
+        wait(&session, Duration::from_secs(10), |s| s.can_leave());
+    }
     fn wait(
         session: &CaptureSession,
         timeout: Duration,
@@ -1178,6 +1298,7 @@ mod tests {
             }],
             highlights: Vec::new(),
             image: None,
+            insert: None,
             motion: crate::OverlayMotion::default(),
             highlight_style: crate::HighlightStyle::default(),
         }

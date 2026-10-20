@@ -259,3 +259,39 @@ Keep the bounded UI worker queue; do not reduce camera preview frame rate.
   system FFmpeg concat/codec implementation. Lossy H.264/YUV conversion means
   decoded-pixel comparisons need an explicit tolerance; shared raw RGBA equality
   alone is not proof of encoded-video equality.
+
+## Visual inserts and zoom · milestone 7
+
+- Store insert-only content as an optional serde-defaulted immutable snapshot,
+  preserving old six-kind matches and existing photo cards. Require a separate cue
+  for text cards, avoiding an ambiguous implicit caption over a visual insert.
+- Define Fullscreen/Beside/Behind geometry once in core. Behind means an opaque
+  camera card over media; real background removal would need an explicit matte
+  feature. This assumption was stated while an optional user response was pending.
+- Keep video inserts visual/muted and preserve sequence narration. Audio mixing is
+  an explicit remaining capability, not a hidden change in the soundtrack.
+- Keep normalized integer zoom state for exact JSON/history equality; use absolute
+  time for Smooth/Steady/Snappy interpolation. Reduced motion holds the start view.
+- Preserve original imported media and prepare a local muted30fps H.264 proxy.
+  This uses additional disk and one preparation encode, but makes bounded random
+  seek/live/export framing repeatable for non30fps sources. Never download FFmpeg.
+- Explicitly prepare assets on the worker; render only prepared exact-frame memory.
+  Expose a source-thumbnail helper so UI zoom boxes do not add their own decoder or
+  filesystem logic. Refuse overlapping visual inserts and stale/missing frames.
+- For scene exports, preserve camera aspect until shared composition. The prior
+  early cover crop would lose pixels needed for Beside/Behind and disagree with
+  natural-aspect live preview. Keep the no-insert export path unchanged.
+- Primary references checked: [FFmpeg constant-frame-rate filter](https://ffmpeg.org/ffmpeg-filters.html#fps)
+  and [accurate seeking](https://ffmpeg.org/ffmpeg.html#Main-options). Generated
+  forward/backward seek and encoded-frame comparisons validate the chosen proxy
+  path on this system; they do not prove every decoder/platform behaves identically.
+
+The initial cached full-HD insert+two-card scene measured75.742ms mean. Profiled
+sampling and mostly-transparent canvas blits dominated. Four bounded global-coordinate
+raster stripes preserve the exact Pattern transform; local-coordinate tiles would
+risk floating-point rounding differences. Transparent-pixel skipping uses /255
+rounding verified against tiny-skia instead of approximating alpha arithmetic.
+Bounded exact-content validation reuse avoids rescanning unchanged snapshots.
+Final mean36.054ms/p9539.490ms remains above33.33ms. Retain the verified image quality
+and camera frame rate, report that limitation and measure any later resolution/card
+parallelism work separately rather than claiming sustained30fps live composition.

@@ -1,5 +1,6 @@
 //! One deterministic overlay path for live preview, timeline playback and export.
 //! Asset preparation is explicit. Rendering does not read files or open devices.
+mod scene;
 use crate::{
     HighlightStyle, Orientation, OutputSize, OverlayContent, OverlayKind, OverlayMotion,
     ProjectStore, Result, Studio,
@@ -8,6 +9,7 @@ use catalyst_core::local::{self, FileMode, PathPolicy};
 use cosmic_text::{
     Attrs, Buffer, Color, Family, FontSystem, LineIter, Metrics, Shaping, SwashCache, Weight, Wrap,
 };
+pub use scene::active_overlays;
 use std::{
     collections::{HashMap, VecDeque},
     fs,
@@ -59,6 +61,9 @@ pub struct OverlayAssets {
     root: Option<PathBuf>,
     images: HashMap<String, Arc<Pixmap>>,
     bytes: usize,
+    validated: VecDeque<OverlayContent>,
+    video_cursor: Option<crate::insert::VideoCursor>,
+    video_frame: Option<(String, u64, Arc<Pixmap>)>,
 }
 impl OverlayAssets {
     pub fn new() -> Self {
@@ -68,8 +73,19 @@ impl OverlayAssets {
         *self = Self::default();
     }
     pub fn load_content(&mut self, store: &ProjectStore, content: &OverlayContent) -> Result<()> {
-        content.validate()?;
-        let Some(relative) = &content.image else {
+        if !self.validated.iter().any(|known| known == content) {
+            content.validate()?;
+            self.validated.push_front(content.clone());
+            self.validated.truncate(MAX_LAYOUTS);
+        }
+        let relative = content.image.as_ref().or(match &content.insert {
+            Some(crate::insert::InsertContent {
+                source: crate::insert::InsertSource::Photo { path },
+                ..
+            }) => Some(path),
+            _ => None,
+        });
+        let Some(relative) = relative else {
             return Ok(());
         };
         if self
@@ -203,8 +219,13 @@ pub struct OverlayRenderer {
     fonts: FontSystem,
     glyphs: SwashCache,
     layouts: VecDeque<(LayoutKey, Arc<CardLayout>)>,
+    scene_scratch: Vec<Pixmap>,
+    scene_threads: usize,
+    validated_inserts: VecDeque<OverlayContent>,
     #[cfg(test)]
     full_layer_reference: bool,
+    #[cfg(test)]
+    scene_reference: bool,
 }
 impl OverlayRenderer {
     pub fn new() -> Result<Self> {
@@ -221,8 +242,15 @@ impl OverlayRenderer {
             fonts: FontSystem::new_with_locale_and_db("en-US".into(), db),
             glyphs: SwashCache::new(),
             layouts: VecDeque::new(),
+            scene_scratch: Vec::new(),
+            scene_threads: std::thread::available_parallelism()
+                .map_or(1, usize::from)
+                .min(4),
+            validated_inserts: VecDeque::new(),
             #[cfg(test)]
             full_layer_reference: false,
+            #[cfg(test)]
+            scene_reference: false,
         })
     }
     pub fn render_timeline(
@@ -232,47 +260,7 @@ impl OverlayRenderer {
         assets: &OverlayAssets,
         options: RenderOptions,
     ) -> Result<RgbaFrame> {
-        // Find the current clip once. Do not perform a whole-project cue lookup
-        // for every inactive cue on every frame of a long interview.
-        let mut cursor = 0_u64;
-        let mut current = None;
-        for clip in studio.clips() {
-            let end = cursor
-                .checked_add(clip.duration_ms())
-                .ok_or("Sequence time overflows milliseconds")?;
-            if sequence_ms < end {
-                current = Some((clip.id(), sequence_ms - cursor));
-                break;
-            }
-            cursor = end;
-        }
-        let mut active = Vec::new();
-        for cue in studio.cues() {
-            let Some((clip, local_ms)) = current else {
-                break;
-            };
-            if cue.clip_id() != clip
-                || local_ms < cue.offset_ms()
-                || local_ms - cue.offset_ms() >= cue.duration_ms()
-            {
-                continue;
-            }
-            if active.len() == MAX_ACTIVE {
-                return Err("More than nine overlays overlap; shorten or move their cues".into());
-            }
-            let start = studio.cue_sequence_time(cue.id())?;
-            if sequence_ms < start || sequence_ms - start >= cue.duration_ms() {
-                continue;
-            }
-            let content = cue.content().ok_or(
-                "This cue has no approved overlay content; choose its content before playback",
-            )?;
-            active.push(ActiveOverlay {
-                content,
-                elapsed_ms: sequence_ms - start,
-                duration_ms: cue.duration_ms(),
-            });
-        }
+        let active = active_overlays(studio, sequence_ms)?;
         self.render_live(studio.orientation().output_size(), &active, assets, options)
     }
     pub fn render_live(
@@ -282,6 +270,23 @@ impl OverlayRenderer {
         assets: &OverlayAssets,
         options: RenderOptions,
     ) -> Result<RgbaFrame> {
+        if overlays
+            .iter()
+            .any(|o| o.elapsed_ms < o.duration_ms && o.content.insert.is_some())
+        {
+            return Err("Use scene composition to preview or export visual inserts".into());
+        }
+        Ok(straight(
+            self.render_cards(size, overlays, assets, options)?,
+        ))
+    }
+    fn render_cards(
+        &mut self,
+        size: OutputSize,
+        overlays: &[ActiveOverlay<'_>],
+        assets: &OverlayAssets,
+        options: RenderOptions,
+    ) -> Result<Pixmap> {
         if size != Orientation::Horizontal.output_size()
             && size != Orientation::Vertical.output_size()
         {
@@ -386,7 +391,7 @@ impl OverlayRenderer {
         if self.glyphs.image_cache.len() > 8192 {
             self.glyphs = SwashCache::new();
         }
-        Ok(straight(canvas))
+        Ok(canvas)
     }
 
     fn shape(

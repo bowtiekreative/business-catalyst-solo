@@ -28,6 +28,8 @@ impl SequencePlayer {
             "1",
             "-protocol_whitelist",
             "file",
+            "-f",
+            "mov",
         ]);
         if muted {
             command.arg("-an");

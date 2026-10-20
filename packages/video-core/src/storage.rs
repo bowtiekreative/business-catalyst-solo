@@ -271,7 +271,7 @@ fn validate_media(root: &Path, studio: &Studio) -> Result<()> {
         .filter_map(|s| s.content())
         .chain(studio.cues().iter().filter_map(|c| c.content()))
     {
-        if let Some(path) = &content.image {
+        for path in content.media_paths() {
             local::confined_file(root, path, PathPolicy::LocalProject, FileMode::Existing)?;
         }
     }

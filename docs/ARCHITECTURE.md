@@ -273,3 +273,61 @@ close. This is distinct from the live camera stage; it is not an embedded egui
 sequence decoder. The controller starts/reaps players off painting, rejects stale
 project results and exposes errors instead of leaving a blank stage. The export
 folder opener also runs off-thread, with bounded waiting and visible failures.
+
+## Visual inserts and zoom · milestone 7
+
+`OverlayContent.insert` is a serde-defaulted immutable InsertContent snapshot.
+Existing six-kind/photo-card projects load unchanged. `from_insert` creates the
+explicit insert-only Photo alternative; ambiguous card text/image/insert mixtures
+are refused. The title is metadata. `media_paths()` lets storage/export apply the
+same project confinement to legacy images and new insert sources. All cues still
+belong to their clip, so move/undo/save retain the approved insert definition.
+
+ZoomPoint stores source-relative integer center and100–250% zoom; ZoomSpec stores
+start/end, duration and Smooth/Steady/Snappy easing. The core computes cover crop,
+interpolation/clamping and box-to-model conversion from absolute time. Reduced
+motion freezes the approved start box. The integer-millisecond clock tolerates
+half a millisecond when mapping to the30fps source grid, preserving every rounded
+output frame without repeated33ms accumulation or alternating dropped frames.
+
+SceneLayout owns both shapes and three layouts. Fullscreen hides the camera image;
+Beside splits landscape horizontally or portrait vertically. Behind places an
+opaque aspect-preserved camera card over full-frame media. It does not isolate a
+person or remove the camera background. Video inserts are visual/muted; the
+sequence's existing narration audio continues.
+
+Image preparation reuses the existing confined cache. Explicit worker operations
+import/prepare a muted H.26430fps square-pixel proxy, retaining the imported original.
+The proxy has even dimensions with long axis at most1920px. Canonical frames and
+integer-second seek plus an exact remainder trim make seek repeatable instead of
+assuming arbitrary VFR timestamps are frame indices. inspect_video validates
+metadata for offset/duration controls; no probe happens in painting. The cache
+prepares one requested video frame tagged by path and source frame. A missing,
+changed, ended or wrong-time asset is an error, never an old frame substitute.
+
+`prepare_live/prepare_timeline` do explicit worker IO; `insert_preview` returns the
+prepared natural-aspect source thumbnail. `render_scene_live/render_scene_timeline`
+perform no file reads/decodes and compose straight RGBA using the same card renderer.
+Overlay-only APIs explicitly reject inserts. One visual insert may be active;
+overlap errors are editable and cards can still appear above it. Camera input is
+unpadded natural-aspect RGBA, including4:3 modes; capture supplies mode-derived
+preview geometry. Empty camera UI references remain a caller decision, not media.
+
+M8's external API remains unchanged. Sequences containing inserts normalize camera
+clips with known integer aspect-preserving padding, decode through a bounded raw
+frame reader and strip only those known margins before shared scene composition.
+Final encoding receives opaque scene RGBA plus the existing exact PCM narration
+sequence. No-insert sequences retain their existing overlay-stream path. Each
+reader has a capacity-one channel, current frame and one producer work buffer;
+preparation additionally owns one premultiplied insert frame. Decoder/asset memory
+is bounded by frame/image limits rather than sequence duration. Cancellation closes
+receivers before joining blocked producers and kills/reaps decoder children.
+
+Large scene panels use at most four reusable full-HD scratch rasters, each drawing
+only its assigned rows with the original global tiny-skia Pattern coordinates.
+This preserves sampling/rounding while parallelizing expensive image fills. Identity
+card composition uses the same /255 byte rounding as the pinned tiny-skia path,
+skipping transparent pixels; exhaustive and full-frame reference proofs gate it.
+Exact immutable insert/asset snapshots reuse bounded validation entries, while a
+changed snapshot is validated again. No font/image quality or camera FPS is reduced.
+The measured final scene still exceeds the30fps frame budget; see VALIDATION.

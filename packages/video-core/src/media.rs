@@ -15,6 +15,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// Only self-contained supported video containers. In particular, a renamed
+/// playlist must never cause FFmpeg to follow files that bypass confinement.
+pub(crate) const VIDEO_DEMUXERS: &str = "mov,matroska,webm,avi,mpegts";
+
 #[derive(Clone, Default)]
 pub struct Cancellation(Arc<AtomicBool>);
 impl Cancellation {
@@ -390,6 +394,8 @@ pub(crate) fn probe_owned(source: &Path, cancel: &Cancellation) -> Result<MediaI
                 "error",
                 "-protocol_whitelist",
                 "file,pipe",
+                "-format_whitelist",
+                VIDEO_DEMUXERS,
                 "-show_entries",
                 "format=duration:stream=codec_type,width,height,duration",
                 "-of",

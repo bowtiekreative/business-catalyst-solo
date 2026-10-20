@@ -384,3 +384,69 @@ and subsequent milestone verification remain separate from this core checkpoint.
 This establishes generated native controller/player interaction. Physical camera
 quality, timing/drift/unplug, local AI, M7 inserts, keychain publishing, packaging
 and Windows acceptance remain separate. The installed Dioxus app is preserved.
+
+## Visual inserts and zoom — 2026-10-20 (Edmonton)
+
+- M7 pure regressions passed9/9: integer-millisecond/30fps clock over18,000 frames;
+  bounded zoom centers/100–250%/positive duration, all three easing endpoints,
+  reduced motion, box conversion, old JSON defaults, exact insert roundtrip and
+  malformed/mixed content rejection; both shapes/all three scene layouts at0,
+  2500 and5000ms; immutable cue after slot changes; missing/stale/overlapping
+  insert errors; natural source thumbnail and no per-render file reads.
+- Generated integrations passed3/3 in46.09s on the final pixel-safe renderer.
+  Four six-second MP4s exercised horizontal fullscreen photo, vertical Beside
+  photo, horizontal Behind video and vertical fullscreen video. Each had180
+  frames at30fps, H.264/AAC and saved a local project version. All twelve decoded
+  samples at0,2.5 and5s matched their shared live/timeline scene with RGB MAE
+  **0.816–1.368**, below the explicit7-value lossy tolerance. Raw live/timeline
+  frames were identical. Source camera media stayed unchanged.
+- A24fps selected video became a muted30fps195-frame proxy; original bytes remained.
+  Forward/backward exact-frame seeks matched, stale/end-of-source frames failed,
+  cancellation published no extra proxy, and symlink/hardlink input was refused.
+  Scene cancellation left no MP4 or saved JSON change. Overlapping inserts and
+  source intervals extending past the last frame were refused before publication.
+- Existing generated no-insert export regressions passed2/2 in13.05s after scene
+  integration, including source order/audio/overlay timing, both shapes, actual
+  progress/cancel, collisions, stale saves and local-version failure preservation.
+- Generated proof is retained at `/tmp/storyfold-insert-proof-XWV9y1`: four MP4s
+  under its project exports and24 expected/decoded PNGs. Portrait Beside and
+  horizontal Behind decoded2500ms samples were visually inspected. The camera
+  card is opaque with its original background; this is not person segmentation.
+- Final exact optimization/reference proof passed36 full-HD comparisons across
+  two shapes, three placements and six animation/zoom times, including translucent
+  images and card entry. Identity card composition also matched pinned tiny-skia
+  for every alpha/gray pair with both opaque and translucent destinations. Changed
+  secret text and invalid zoom did not enter either bounded validation cache.
+
+The cached generated1920×1080 scene benchmark uses an animated insert plus two
+text cards and a1280×720 camera frame, with no IO in the measured30-frame loop:
+
+| Implementation | Mean | Median | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Initial scene |75.742ms|75.320ms|81.767ms|84.583ms|
+| Final bounded composition |36.054ms|35.859ms|39.490ms|39.734ms|
+
+A representative final profiled frame spent14.246ms sampling the insert,14.185ms
+rasterizing cards,4.805ms drawing the camera card,1.575ms combining cards,1.780ms
+producing straight RGBA and1.241ms setup. Exact-content validation reuse measured
+0.002ms in that frame. These stages identify remaining work, not independent p95s.
+The final scene still misses the33.33ms budget: **sustained30fps full-HD live scene
+composition is not accepted**. Camera FPS, source quality and resampling were not
+reduced. This does not measure physical input latency, ten-minute drift, unplug,
+real VFR/HDR/rotation/platform behavior, or native app integration; coordinator
+acceptance remains separate. Video inserts stay visual/muted while narration
+continues, and Behind does not remove a background.
+
+After container hardening, the final generated suite passed **4/4 in43.37s**.
+A renamed ffconcat `.mp4` with a normal-name symlink reference was refused by
+probe, import, canonical insert inspection/preparation and sequence export, with
+no imported file or exported artifact. Controlled private concat lists continued
+working in the parity cases. A320×240 source with2:1 pixel aspect became a
+640×240 square-pixel proxy with six frames. Exported insert narration also passed
+an audible RMS check (>0.02); video inserts themselves remain muted.
+
+
+Final post-repair no-insert export regressions passed2/2 in13.70s. Strict
+all-target/all-feature core Clippy, owned-source formatting and whitespace checks
+passed. CPU/cgroup topology is queried once during renderer construction, keeping
+frame composition free of topology/file queries. No physical device was opened.

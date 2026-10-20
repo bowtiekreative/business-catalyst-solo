@@ -45,6 +45,9 @@ pub struct OverlayContent {
     pub motion: OverlayMotion,
     #[serde(default)]
     pub highlight_style: HighlightStyle,
+    /// Explicit visual insert, separate from legacy photo-card content.
+    #[serde(default)]
+    pub insert: Option<crate::insert::InsertContent>,
 }
 impl OverlayContent {
     pub fn new(kind: OverlayKind, title: impl Into<String>) -> Self {
@@ -56,7 +59,19 @@ impl OverlayContent {
             image: None,
             motion: OverlayMotion::default(),
             highlight_style: HighlightStyle::default(),
+            insert: None,
         }
+    }
+    pub fn from_insert(title: impl Into<String>, insert: crate::insert::InsertContent) -> Self {
+        let mut content = Self::new(OverlayKind::Photo, title);
+        content.insert = Some(insert);
+        content
+    }
+    pub fn media_paths(&self) -> impl Iterator<Item = &str> {
+        self.image
+            .as_deref()
+            .into_iter()
+            .chain(self.insert.as_ref().map(|insert| insert.path()))
     }
     pub fn validate(&self) -> Result<()> {
         if self.title.trim().is_empty()
@@ -91,7 +106,17 @@ impl OverlayContent {
         if let Some(path) = &self.image {
             crate::model::validate_media_path(path)?;
         }
-        if self.kind == OverlayKind::Photo && self.image.is_none() {
+        if let Some(insert) = &self.insert {
+            insert.validate()?;
+            if self.kind != OverlayKind::Photo
+                || self.image.is_some()
+                || !self.blocks.is_empty()
+                || !self.highlights.is_empty()
+            {
+                return Err("Use an insert by itself; add text in a separate overlay slot".into());
+            }
+        }
+        if self.kind == OverlayKind::Photo && self.image.is_none() && self.insert.is_none() {
             return Err("Choose a project image for this photo overlay".into());
         }
         for text in
@@ -128,6 +153,7 @@ mod tests {
             image: None,
             motion: OverlayMotion::default(),
             highlight_style: HighlightStyle::default(),
+            insert: None,
         };
         assert!(content.validate().is_ok());
         content.highlights[0].end = 7;
