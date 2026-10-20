@@ -153,3 +153,50 @@ Screenshot harness: build `sidebar-video --all-features`, set
 are ignored `data/sidebar-video-timeline/`. Normal builds do not inject fixtures.
 Native folder-picker interaction, physical device capture, screen-reader use,
 Windows compilation and the remaining specification milestones are unverified.
+
+## Sidebar Video continuous capture core · milestone 4 · 2026-10-19
+
+Verified on Linux with the existing project-local Rust 1.99.1 toolchain and
+installed system FFmpeg/ffprobe. No physical camera or microphone was opened.
+
+- `cargo test --workspace --all-features --locked --offline`: **50 passed**,
+  two deliberately ignored generated-media integration tests. This includes all
+  eight original Catalyst workflow tests and six existing native studio tests.
+- `cargo build --workspace --all-features --locked --offline`: passed.
+- `cargo clippy -p catalyst-core -p video-core --all-targets --all-features --locked --offline -- -D warnings`:
+  passed.
+- `STORYFOLD_CAPTURE_TEST=1 cargo test -p video-core --features capture-test --locked --offline capture::engine::tests::generated_ -- --ignored --nocapture --test-threads=1`:
+  both generated integrations passed again after the final shared-lock fix.
+- `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings`:
+  passed.
+- `cargo fmt -p catalyst-core -p video-core -- --check` and `git diff --check`:
+  passed. No generated source is enabled by a normal app build.
+
+Pure regressions cover twenty hold gestures and their order, delayed command
+consumption, the exact tap threshold, explicit stop/cancel, half-open frame ranges,
+segment boundaries, pending/active pruning protection, unknown-file preservation,
+device-ID boundaries, Linux query-structure ABI, source links/playlists/devices,
+subprocess output limits, timeout/cancellation and the feature/environment gate.
+The shared streaming publisher tests collisions, no overwrite and cancelled
+temporary-file cleanup. A duplicated-descriptor regression proves that dropping a
+save/capture lock explicitly releases ownership even while an inherited handle
+remains open. This repaired a failure exposed by the full parallel test run.
+
+The first real FFmpeg integration runs one continuous generated 1920×1080/30
+session, verifies changing 1280×720 RGBA preview frames, queues hold and tap/long
+takes in order, and checks the finalized MP4 decoded frame count against its
+selected range. It checks H.264/AAC tracks, audio/video duration within one frame,
+and byte-identical decoded interior video from copied segments. It also checks
+immutable approved overlay snapshots, clamped cue duration, one-batch undo,
+source-preserving import/cancellation, live-session recovery exclusion and
+completed-take recovery. A second integration kills only the generated FFmpeg
+source during an active long take, verifies explicit failure with retained ranges,
+then recovers a valid partial MP4. Successful test projects are disposable.
+
+This is a core implementation checkpoint. New egui capture UI integration/native
+interaction, real-camera first-frame latency, twenty physical holds, real-device
+unplug, microphone sync and ten-minute drift remain unverified. The non-Linux
+unsupported stub has not been cross-compiled here. Local import supports video
+containers; image import, inference, overlay rendering, final sequence export,
+YouTube and packaging belong to separate work. These tests do not declare the
+full studio or physical capture production-ready.

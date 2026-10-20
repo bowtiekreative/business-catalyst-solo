@@ -124,6 +124,53 @@ failed local version. UI integration must keep newer edits when a worker returns
 a save acknowledgment. No capture, inference, network, export or upload client is
 introduced by milestone 2.
 
+## Continuous capture and media import · milestone 4
+
+Only explicit `CaptureSession::start` opens camera/audio inputs. Linux enumeration
+uses QUERYCAP/ENUM_FRAMEINTERVALS and Pulse inventory without starting a stream.
+Start rechecks the selected detected device IDs and queried 30 fps mode. It accepts
+no arbitrary input URL, filter graph or command string. A disabled microphone
+uses silent local audio so MP4 preparation still has a consistent audio track.
+
+FFmpeg-sidecar is pinned to 2.7.0 with default features disabled; its downloader
+is absent. The app resolves installed system tools, passes fixed argument vectors,
+and never invokes a shell. Probe/import rejects URLs, device nodes, playlists,
+symlinks and hardlinks. Media inputs are protocol-limited to local file/pipe.
+Probe/cut subprocess output is bounded, diagnostics are not reflected as raw
+paths, and jobs have cancellation and timeouts. The cut processing budget scales
+with the selected duration; it is not a fixed interview-length limit.
+
+Each capture owns a new private 0700 session folder on Unix and an OS advisory
+session lock. Source segments stay ignored. A malformed/oversized manifest or
+unsafe descendant path is rejected before recovery work. Recovery refuses a live
+session lock and accesses only manifest-owned deterministic segment filenames.
+It does not reinitialize a project or resume a camera. A prematurely stopped
+tail is probed for complete frames; approved marks beyond the finalized duration
+are skipped and retained mark durations clamp before Editor append.
+
+Capture commands and events have bounded queues. A missed release caused by a
+full command queue requests camera stop rather than leaving an invisible take.
+Event overload stops capture and preserves the recovery manifest. Camera EOF,
+stall or unplug reports an explicit error and keeps completed media and remaining
+segments. Drop requests stop, cancels preparation and reaps the camera process;
+the UI must keep active/finishing sessions visible until `can_leave()`.
+
+New binary media uses the shared confined `PendingFile` helper: private temporary
+file, file fsync, atomic no-clobber publication, and Unix parent-directory fsync.
+Any existing destination remains unchanged, including a collision after file
+preparation. Import copies in fixed-size chunks, checks cancellation and rejects
+an ordinarily changed source. It never follows a growing file indefinitely or
+loads an entire video into RAM. No timeline removal or cancelled take deletes
+an existing source file. As with project saves, hostile concurrent local path
+replacement and hardware power-loss guarantees are outside this workstation's
+verified boundary.
+
+Generated integration tests require both an opt-in Cargo feature and an explicit
+test environment value. Their sources are fixed lavfi patterns/tone; normal
+device inventory never substitutes them for missing hardware. Synthetic timing
+and duration checks do not establish physical capture latency, microphone sync,
+unplug behavior or ten-minute drift acceptance.
+
 The studio folder picker passes explicit local paths to video-core. Project and
 Git errors keep the in-memory draft. New/Open cannot overwrite concurrent draft
 edits while loading; Save can run during edits and acknowledges only its snapshot.

@@ -265,6 +265,16 @@ fn read_files(root: &Path) -> Result<Files> {
     Ok(files)
 }
 fn validate_media(root: &Path, studio: &Studio) -> Result<()> {
+    for content in studio
+        .slots()
+        .iter()
+        .filter_map(|s| s.content())
+        .chain(studio.cues().iter().filter_map(|c| c.content()))
+    {
+        if let Some(path) = &content.image {
+            local::confined_file(root, path, PathPolicy::LocalProject, FileMode::Existing)?;
+        }
+    }
     for source in studio.media() {
         local::confined_file(
             root,

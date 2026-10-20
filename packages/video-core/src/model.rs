@@ -1,5 +1,5 @@
 //! Serializable project data. Constructors/edits/load validate references and bounds.
-use crate::Result;
+use crate::{OverlayContent, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -106,17 +106,22 @@ impl TryFrom<u8> for SlotKey {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OverlaySlot {
     key: SlotKey,
     kind: Option<OverlayKind>,
+    #[serde(default)]
+    pub(crate) content: Option<OverlayContent>,
 }
 impl OverlaySlot {
-    pub const fn key(self) -> SlotKey {
+    pub fn content(&self) -> Option<&OverlayContent> {
+        self.content.as_ref()
+    }
+    pub const fn key(&self) -> SlotKey {
         self.key
     }
-    pub const fn kind(self) -> Option<OverlayKind> {
+    pub const fn kind(&self) -> Option<OverlayKind> {
         self.kind
     }
 }
@@ -223,6 +228,8 @@ pub struct Cue {
     pub(crate) slot: SlotKey,
     pub(crate) kind: OverlayKind,
     pub(crate) duration_ms: u64,
+    #[serde(default)]
+    pub(crate) content: Option<OverlayContent>,
 }
 impl Cue {
     pub const fn id(&self) -> CueId {
@@ -237,8 +244,10 @@ impl Cue {
     pub const fn slot(&self) -> SlotKey {
         self.slot
     }
-    /// Capture the current vocabulary independently of later slot changes.
-    /// Milestone 5 will add an immutable rendered-definition identity.
+    /// The cue keeps its own approved snapshot, independently of later slot edits.
+    pub fn content(&self) -> Option<&OverlayContent> {
+        self.content.as_ref()
+    }
     pub const fn kind(&self) -> OverlayKind {
         self.kind
     }
@@ -271,6 +280,7 @@ impl Default for Studio {
             slots: std::array::from_fn(|index| OverlaySlot {
                 key: SlotKey(index as u8 + 1),
                 kind: None,
+                content: None,
             }),
             media: Vec::new(),
             clips: Vec::new(),
@@ -362,6 +372,12 @@ impl Studio {
             return Err("Project exceeds supported item limits".into());
         }
         for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(content) = &slot.content {
+                content.validate()?;
+                if slot.kind != Some(content.kind) {
+                    return Err("Overlay slot kind does not match content".into());
+                }
+            }
             if usize::from(slot.key.number()) != index + 1 {
                 return Err("Invalid overlay slot identities".into());
             }
@@ -428,12 +444,21 @@ impl Studio {
                 return Err("Duplicate or invalid cue identity".into());
             }
             SlotKey::try_from(cue.slot.number())?;
+            if let Some(content) = &cue.content {
+                content.validate()?;
+                if cue.kind != content.kind {
+                    return Err("Cue kind does not match its immutable content".into());
+                }
+            }
             if cue.offset_ms >= clip.duration_ms()
                 || cue.duration_ms == 0
                 || cue.duration_ms > clip.duration_ms() - cue.offset_ms
             {
                 return Err("Cue exceeds its clip bounds".into());
             }
+        }
+        if serde_json::to_vec(self)?.len() > MAX_PROJECT_BYTES {
+            return Err("Project JSON is too large".into());
         }
         Ok(())
     }
@@ -450,7 +475,18 @@ impl Studio {
         &self.slots
     }
     pub fn set_slot_kind(&mut self, key: SlotKey, kind: Option<OverlayKind>) {
-        self.slots[key.index()].kind = kind;
+        let slot = &mut self.slots[key.index()];
+        slot.kind = kind;
+        if slot.content.as_ref().is_some_and(|c| Some(c.kind) != kind) {
+            slot.content = None;
+        }
+    }
+    pub(crate) fn set_slot_content(&mut self, key: SlotKey, content: OverlayContent) -> Result<()> {
+        content.validate()?;
+        let slot = &mut self.slots[key.index()];
+        slot.kind = Some(content.kind);
+        slot.content = Some(content);
+        Ok(())
     }
     pub fn rename(&mut self, name: &str) -> std::result::Result<(), NameError> {
         let name = name.trim();
@@ -500,7 +536,7 @@ mod tests {
     #[test]
     fn shape_changes_exact_output_dimensions_without_touching_slots_or_name() {
         let mut studio = Studio::default();
-        let slots = *studio.slots();
+        let slots = studio.slots().clone();
         let name = studio.name().to_owned();
         assert_eq!(
             studio.orientation().output_size(),

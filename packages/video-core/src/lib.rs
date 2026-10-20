@@ -1,10 +1,14 @@
-//! Validated local video projects and timeline edits. No device, inference or
-//! network operations are implemented in this core foundation.
+//! Validated local projects, timeline edits and explicit continuous capture.
+//! Construction never opens hardware, starts inference or makes network calls.
+pub mod capture;
+pub mod media;
 mod model;
+mod overlay;
 mod storage;
 mod timeline;
 
 pub use catalyst_core::Result;
 pub use model::*;
+pub use overlay::{Highlight, OverlayBlock, OverlayContent};
 pub use storage::{ProjectStore, SaveVersion};
 pub use timeline::{Direction, Edit, EditOutcome, Editor, HISTORY_LIMIT, Nudge, TrimEdge};

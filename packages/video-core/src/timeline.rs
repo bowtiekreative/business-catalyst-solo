@@ -25,6 +25,10 @@ pub enum Edit {
         slot: SlotKey,
         kind: Option<OverlayKind>,
     },
+    SetSlotContent {
+        slot: SlotKey,
+        content: OverlayContent,
+    },
     AddMedia {
         path: String,
         duration_ms: u64,
@@ -72,6 +76,13 @@ pub enum Edit {
         clip: ClipId,
         offset_ms: u64,
         slot: SlotKey,
+        duration_ms: u64,
+    },
+    AddCueFromSnapshot {
+        clip: ClipId,
+        offset_ms: u64,
+        slot: SlotKey,
+        content: OverlayContent,
         duration_ms: u64,
     },
     RemoveCue {
@@ -184,6 +195,7 @@ impl Studio {
             }
             Edit::SetOrientation(orientation) => self.set_orientation(orientation),
             Edit::SetSlotKind { slot, kind } => self.set_slot_kind(slot, kind),
+            Edit::SetSlotContent { slot, content } => self.set_slot_content(slot, content)?,
             Edit::AddMedia { path, duration_ms } => {
                 validate_media_path(&path)?;
                 if duration_ms == 0 || self.media.len() >= MAX_MEDIA {
@@ -345,6 +357,9 @@ impl Studio {
                 let kind = self.slots()[usize::from(slot.number() - 1)]
                     .kind()
                     .ok_or("Choose a card type before adding a cue")?;
+                let content = self.slots()[usize::from(slot.number() - 1)]
+                    .content()
+                    .cloned();
                 let id = self.next_cue_id();
                 self.next_cue += 1;
                 self.cues.push(Cue {
@@ -354,6 +369,29 @@ impl Studio {
                     slot,
                     kind,
                     duration_ms,
+                    content,
+                });
+                return Ok(EditOutcome::CueAdded(id));
+            }
+            Edit::AddCueFromSnapshot {
+                clip,
+                offset_ms,
+                slot,
+                content,
+                duration_ms,
+            } => {
+                self.clip_index(clip)?;
+                content.validate()?;
+                let id = self.next_cue_id();
+                self.next_cue += 1;
+                self.cues.push(Cue {
+                    id,
+                    clip_id: clip,
+                    offset_ms,
+                    slot,
+                    kind: content.kind,
+                    duration_ms,
+                    content: Some(content),
                 });
                 return Ok(EditOutcome::CueAdded(id));
             }

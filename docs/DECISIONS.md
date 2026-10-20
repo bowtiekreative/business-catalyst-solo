@@ -114,6 +114,59 @@
   must resolve to regular owned files. The next import/capture API must make file
   creation atomic and explicit; no fake sources are introduced in the normal UI.
 
+## Continuous capture and explicit import · milestone 4
+
+- Follow the continuous-session specification: one system FFmpeg process keeps
+  the selected devices open until explicit Stop camera. Record gestures mark
+  buffered frame ranges; they do not restart hardware. Device enumeration only
+  queries capabilities/modes. Prefer a real 1920×1080 MJPEG30 mode, with honest
+  lower-resolution queried options rather than an unverified default.
+- Use the verified upstream
+  [FFmpeg-sidecar 2.7 command API](https://docs.rs/ffmpeg-sidecar/2.7.0/ffmpeg_sidecar/command/struct.FfmpegCommand.html)
+  and disable all default download features. Use system FFmpeg/ffprobe; no tool
+  downloader or network adapter is introduced. Read raw preview directly into
+  one latest-frame slot rather than queuing frame events for the UI.
+- Keep 720p30 RGBA preview clarity and smoothness. Both preview and recording
+  split from one normalized 30 fps filter; frame IDs, rather than UI time or
+  process-start guesses, identify source frames. Mark the latest received frame
+  at the API call. Camera transport/decoder/preview latency is explicitly still
+  a physical acceptance measurement. Do not claim the generated test proves a
+  first physical frame within one frame of a press.
+- Use the documented
+  [FFmpeg segment muxer](https://ffmpeg.org/ffmpeg-formats.html#segment)
+  with one-second closed GOPs, MPEG-TS segments and a CSV index. Read that index
+  incrementally and derive range boundaries from the shared 30 fps frame clock.
+  Preserve an unclosed tail for explicit probe/recovery after interruption.
+- Re-encode only first/last video segments and copy fully interior H.264. The
+  coordinator accepted one AAC encode of the whole selected audio range at final
+  mux: repeatedly encoding AAC edges would accumulate encoder priming and complicate
+  precise audio boundaries. Generated tests compare decoded interior video bytes
+  and selected frame counts; real microphone drift still needs measurement.
+- Capture overlay marks own approved `OverlayContent` snapshots and requested
+  duration at fire time. Changing/undoing a sidebar slot cannot change recorded
+  content. The completed take batches source, clip and snapshot cues in one undo
+  step. Skip marks past recovered ends and clamp durations to finalized media.
+- Use a bounded controller queue, latest-frame slot and event queue, with a
+  separate cut worker. Stop/Drop must release hardware even if preparation fails.
+  Preserve failed/pending ranges and published takes for recovery. Never silently
+  append recovered content or overwrite another in-memory project.
+- Reuse/extend the shared local primitives with `PendingFile` and named advisory
+  locks. Streaming private files avoid full-video allocations. No-clobber
+  publication keeps any existing destination intact. Source copy checks metadata
+  before/after and reads only its original length.
+- Import keeps an explicitly selected supported local video container unchanged
+  under a generated project-owned name, instead of unnecessarily re-encoding an
+  imported interview. Probe validates video geometry/duration; later rendering
+  and export use installed FFmpeg decoders. No URL/playlist import is inferred.
+- Prune only a known closed session prefix older than 600 seconds and before
+  active/pending ranges. Conservative extra retention is preferable to deleting
+  a range required for a failed take. Stopped recovery sessions remain on disk;
+  no background recursive cleanup or source-media garbage collection is added.
+- Non-Linux builds compile an unsupported capture stub. Physical first-frame
+  timing, twenty device holds, microphone drift over ten minutes and a real
+  unplug remain unverified. The generated source is a separate feature+environment
+  gated testing API, never a normal-app camera placeholder.
+
 ## Sidebar Video timeline UI
 
 - File dialogs, safe project writes and local Git versions run on a named worker

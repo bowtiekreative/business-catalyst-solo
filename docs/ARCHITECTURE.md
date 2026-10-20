@@ -86,6 +86,53 @@ explicit project policy, fixed Sidebar private namespace and existing owned
 media references. Import/capture, immutable rendered overlay definitions,
 renderer, inference, export, upload and packaging remain separate milestones.
 
+## Sidebar Video capture and import · milestone 4
+
+`video-core::capture` owns an explicit continuous Linux session. One system
+FFmpeg process opens the selected V4L2 camera and optional Pulse microphone,
+encodes one-second H.264/AAC MPEG-TS segments and writes 1280×720 RGBA preview
+frames. The preview reader drains continuously and replaces one shared latest
+frame; UI paint/poll frequency cannot build an unbounded frame queue. Capture
+never starts from drawing the UI or enumerating devices.
+
+The same normalized 30 fps video is split into recorded and preview branches.
+Frame `n` identifies the same video frame in both branches. Press/release sample
+the core's latest complete preview frame at the API call; range starts are
+inclusive and ends exclusive. Host `Instant` determines the 350 ms tap/hold
+gesture independently of worker scheduling. A stale preview refuses a new take.
+This measures a pipeline frame clock, not physical camera-to-screen latency.
+
+The capture controller and take-preparation worker are separate. Camera start,
+stop and gesture handling remain responsive while a previous take is prepared.
+Only boundary video segments are re-encoded; fully interior video is copied.
+Audio is encoded once for the selected range at final MP4 mux to avoid AAC
+priming accumulation at one-second joins. Completed media is probed and atomically
+published before a completion event. A take's approved overlay content snapshots
+are retained with frame-derived offsets, then appended with media/clip/cue edits
+as one Editor transaction; durations clamp to the actual finalized video.
+
+An ignored session manifest stores marks, ranges, prepared files and closed
+segment indices. Its CSV index is read incrementally. Only known closed session
+segments older than 600 seconds are pruned, conservatively stopping at the first
+active/pending/protected range. Published media never depends on those segments.
+Stopped sessions and failed ranges remain available for explicit recovery;
+unknown buffer files are never recursively removed. Recovery takes a session OS
+lock, never starts hardware, and can salvage complete frames from a final
+interrupted MPEG-TS segment.
+
+`video-core::media` provides explicit bounded local probing and streaming import.
+It copies an explicitly chosen regular local video into a private pending file,
+checks source stability, probes the copy, and publishes a new owned media path.
+Cancellation drops the pending file and preserves the source. The shared
+`catalyst_core::local::PendingFile` centralizes streaming fsync/noclobber publication;
+`lock_named` generalizes the existing advisory lock for a fixed capture identity.
+No whole video is loaded into application memory for import or publication.
+
+The non-Linux capture implementation is an honest unsupported stub. Media import
+continues to use explicitly installed local tools. Generated capture exists only
+with the `capture-test` feature plus `STORYFOLD_CAPTURE_TEST=1`, through a separate
+explicit API; it is never presented as an ordinary detected camera.
+
 The native studio UI (`apps/sidebar-video/src/workspace.rs`) owns only its Editor,
 view state and an acknowledged save snapshot. ProjectStore is used on worker
 threads for New/Open/Save/Save version. The UI forwards typed domain edits; it

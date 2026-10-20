@@ -249,8 +249,22 @@ pub fn reject_file_links(path: &Path) -> Result<()> {
 pub struct SaveLock {
     _file: fs::File,
 }
+impl Drop for SaveLock {
+    fn drop(&mut self) {
+        // Release ownership before close even if a concurrently spawned child
+        // temporarily inherited a duplicate of this open file description.
+        let _ = fs2::FileExt::unlock(&self._file);
+    }
+}
 pub fn lock_project(root: &Path, namespace: PrivateNamespace) -> Result<SaveLock> {
-    let path = private_dir(root, namespace, true)?.join("save.lock");
+    lock_named(root, namespace, "save.lock")
+}
+pub fn lock_named(root: &Path, namespace: PrivateNamespace, name: &str) -> Result<SaveLock> {
+    validate_relative_path(name)?;
+    if name.contains('/') {
+        return Err("Lock must have one fixed filename".into());
+    }
+    let path = private_dir(root, namespace, true)?.join(name);
     if let Ok(meta) = fs::symlink_metadata(&path) {
         if meta.file_type().is_symlink() || !meta.is_file() {
             return Err("Save lock must be a normal file".into());
@@ -266,6 +280,60 @@ pub fn lock_project(root: &Path, namespace: PrivateNamespace) -> Result<SaveLock
     reject_hard_link(&file.metadata()?)?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|_| "Another project save is running")?;
     Ok(SaveLock { _file: file })
+}
+
+/// A confined, private streaming output. FFmpeg may write its temporary path;
+/// publication fsyncs and refuses to replace any pre-existing destination.
+pub struct PendingFile {
+    root: PathBuf,
+    relative: String,
+    temp: tempfile::NamedTempFile,
+}
+impl PendingFile {
+    pub fn prepare(root: &Path, relative: &str) -> Result<Self> {
+        check_root(root)?;
+        let destination = confined_file(
+            root,
+            relative,
+            PathPolicy::LocalProject,
+            FileMode::NewOrExisting,
+        )?;
+        if fs::symlink_metadata(&destination).is_ok() {
+            return Err("New output must not replace an existing file".into());
+        }
+        let temp = tempfile::Builder::new()
+            .prefix("pending-")
+            .suffix(".part")
+            .tempfile_in(destination.parent().ok_or("Missing output parent")?)?;
+        Ok(Self {
+            root: root.to_owned(),
+            relative: relative.into(),
+            temp,
+        })
+    }
+    pub fn path(&self) -> &Path {
+        self.temp.path()
+    }
+    pub fn file_mut(&mut self) -> &mut fs::File {
+        self.temp.as_file_mut()
+    }
+    pub fn publish(self) -> Result<PathBuf> {
+        check_root(&self.root)?;
+        let destination = confined_file(
+            &self.root,
+            &self.relative,
+            PathPolicy::LocalProject,
+            FileMode::NewOrExisting,
+        )?;
+        reject_file_links(self.temp.path())?;
+        self.temp.as_file().sync_all()?;
+        self.temp.persist_noclobber(&destination).map_err(
+            |_| "Output exists or could not be published; no existing file was replaced",
+        )?;
+        #[cfg(unix)]
+        fs::File::open(destination.parent().ok_or("Missing output parent")?)?.sync_all()?;
+        Ok(destination)
+    }
 }
 
 pub enum WriteExpected<'a> {
@@ -363,6 +431,20 @@ pub fn hardened_git(root: &Path, args: &[&str]) -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn dropping_owner_unlocks_even_while_a_duplicated_descriptor_stays_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let guard = lock_project(temp.path(), PrivateNamespace::Sidebar).unwrap();
+        let inherited = guard._file.try_clone().unwrap();
+        assert!(lock_project(temp.path(), PrivateNamespace::Sidebar).is_err());
+        drop(guard);
+        let next = lock_project(temp.path(), PrivateNamespace::Sidebar).unwrap();
+        drop(inherited);
+        assert!(lock_project(temp.path(), PrivateNamespace::Sidebar).is_err());
+        drop(next);
+        assert!(lock_project(temp.path(), PrivateNamespace::Sidebar).is_ok());
+    }
     #[test]
     fn interrupted_or_stale_atomic_publish_keeps_a_complete_document() {
         let dir = tempfile::tempdir().unwrap();
@@ -414,6 +496,26 @@ mod tests {
         assert_eq!(status.code(), Some(88));
         assert_eq!(fs::read(temp.path().join("project.json")).unwrap(), old);
         assert!(lock_project(temp.path(), PrivateNamespace::Sidebar).is_ok());
+    }
+    #[test]
+    fn streaming_outputs_publish_once_and_cleanup_cancelled_temporary_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        create_directory(&root, "media").unwrap();
+        let mut pending = PendingFile::prepare(&root, "media/video.mp4").unwrap();
+        pending.file_mut().write_all(b"complete bytes").unwrap();
+        let path = pending.publish().unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"complete bytes");
+        assert!(PendingFile::prepare(&root, "media/video.mp4").is_err());
+        let mut collision = PendingFile::prepare(&root, "media/collision.mp4").unwrap();
+        collision.file_mut().write_all(b"new").unwrap();
+        fs::write(root.join("media/collision.mp4"), b"keep").unwrap();
+        assert!(collision.publish().is_err());
+        assert_eq!(fs::read(root.join("media/collision.mp4")).unwrap(), b"keep");
+        let cancelled = PendingFile::prepare(&root, "media/cancelled.mp4").unwrap();
+        let temporary = cancelled.path().to_owned();
+        drop(cancelled);
+        assert!(!temporary.exists() && !root.join("media/cancelled.mp4").exists());
     }
     #[test]
     fn project_paths_and_private_folders_are_constrained() {
