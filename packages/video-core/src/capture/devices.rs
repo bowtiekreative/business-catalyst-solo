@@ -7,6 +7,8 @@ use crate::Result;
 #[cfg(target_os = "linux")]
 use crate::media::{Cancellation, run_bounded};
 #[cfg(target_os = "linux")]
+pub(super) use linux::{FrameRateGuard, keep_frame_rate};
+#[cfg(target_os = "linux")]
 use std::{fs, process::Command, time::Duration};
 
 pub fn enumerate_devices() -> Result<DeviceInventory> {
@@ -92,9 +94,73 @@ fn parse_pulse(bytes: &[u8]) -> Result<Vec<MicrophoneDevice>> {
 mod linux {
     use super::*;
     use std::{
-        fs::OpenOptions,
+        fs::{File, OpenOptions},
+        io,
         os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     };
+    const EXPOSURE_AUTO_PRIORITY: u32 = 0x009a_0903;
+    #[repr(C)]
+    struct Control {
+        id: u32,
+        value: i32,
+    }
+
+    /// Holds the camera descriptor until capture has stopped. Restoration is
+    /// best effort and never overwrites a subsequently changed control value.
+    pub(crate) struct FrameRateGuard {
+        file: File,
+    }
+    pub(crate) fn keep_frame_rate(id: &str) -> Option<FrameRateGuard> {
+        if !valid_camera(id) {
+            return None;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(id)
+            .ok()?;
+        if prefer_frame_rate(|value| exposure_priority(&file, value)) {
+            Some(FrameRateGuard { file })
+        } else {
+            None
+        }
+    }
+    impl Drop for FrameRateGuard {
+        fn drop(&mut self) {
+            restore_frame_rate(|value| exposure_priority(&self.file, value));
+            // File closes after this method returns, including restore failure.
+        }
+    }
+    fn exposure_priority(file: &File, value: Option<i32>) -> io::Result<i32> {
+        let mut control = Control {
+            id: EXPOSURE_AUTO_PRIORITY,
+            value: value.unwrap_or_default(),
+        };
+        let request = if value.is_some() {
+            libc::_IOWR::<Control>(b'V' as u32, 28)
+        } else {
+            libc::_IOWR::<Control>(b'V' as u32, 27)
+        };
+        // SAFETY: this initialized 8-byte v4l2_control matches the kernel ABI.
+        // The live File owns the descriptor. G_CTRL/S_CTRL only access this
+        // one boolean control; neither queues buffers nor starts streaming.
+        if unsafe { libc::ioctl(file.as_raw_fd(), request, &mut control) } < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(control.value)
+        }
+    }
+    // A tiny injectable control operation keeps the real ioctl and restoration
+    // decision on one path while tests never open physical camera hardware.
+    fn prefer_frame_rate(mut control: impl FnMut(Option<i32>) -> io::Result<i32>) -> bool {
+        matches!(control(None), Ok(1)) && control(Some(0)).is_ok()
+    }
+    fn restore_frame_rate(mut control: impl FnMut(Option<i32>) -> io::Result<i32>) {
+        if matches!(control(None), Ok(0)) {
+            let _ = control(Some(1));
+        }
+    }
     #[repr(C)]
     #[derive(Default)]
     struct Capability {
@@ -226,6 +292,93 @@ mod linux {
             assert_eq!(std::mem::size_of::<Capability>(), 104);
             assert_eq!(std::mem::offset_of!(Capability, device_caps), 88);
             assert_eq!(std::mem::size_of::<FrameInterval>(), 52);
+            assert_eq!(std::mem::size_of::<Control>(), 8);
+            assert_eq!(std::mem::offset_of!(Control, id), 0);
+            assert_eq!(std::mem::offset_of!(Control, value), 4);
+            assert_eq!(EXPOSURE_AUTO_PRIORITY, 0x009a_0903);
+            #[cfg(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64"))]
+            {
+                assert_eq!(libc::_IOWR::<Control>(b'V' as u32, 27), 0xc008_561b);
+                assert_eq!(libc::_IOWR::<Control>(b'V' as u32, 28), 0xc008_561c);
+            }
+        }
+        #[test]
+        fn frame_rate_priority_is_temporarily_changed_and_restored() {
+            let mut value = 1;
+            let mut operations = Vec::new();
+            let mut control = |requested| {
+                operations.push(requested);
+                if let Some(requested) = requested {
+                    value = requested;
+                }
+                Ok(value)
+            };
+            assert!(prefer_frame_rate(&mut control));
+            restore_frame_rate(&mut control);
+            assert_eq!(value, 1);
+            assert_eq!(operations, [None, Some(0), None, Some(1)]);
+        }
+        #[test]
+        fn existing_frame_rate_priority_and_unsupported_controls_are_untouched() {
+            for original in [0, 2] {
+                let mut writes = Vec::new();
+                assert!(!prefer_frame_rate(|requested| {
+                    if let Some(requested) = requested {
+                        writes.push(requested);
+                    }
+                    Ok(original)
+                }));
+                assert!(writes.is_empty());
+            }
+            let mut reads = 0;
+            assert!(!prefer_frame_rate(|requested| {
+                assert!(requested.is_none());
+                reads += 1;
+                Err(io::Error::from_raw_os_error(libc::EINVAL))
+            }));
+            assert_eq!(reads, 1);
+            assert!(!prefer_frame_rate(|requested| {
+                if requested.is_none() {
+                    Ok(1)
+                } else {
+                    Err(io::Error::from_raw_os_error(libc::EACCES))
+                }
+            }));
+        }
+        #[test]
+        fn restoration_preserves_external_change_and_ignores_ioctl_errors() {
+            for current in [1, 2] {
+                restore_frame_rate(|requested| {
+                    assert!(requested.is_none(), "Do not overwrite external change");
+                    Ok(current)
+                });
+            }
+            restore_frame_rate(|requested| {
+                assert!(requested.is_none(), "Do not write after failed query");
+                Err(io::Error::from_raw_os_error(libc::ENODEV))
+            });
+            let mut operations = Vec::new();
+            restore_frame_rate(|requested| {
+                operations.push(requested);
+                if requested.is_none() {
+                    Ok(0)
+                } else {
+                    Err(io::Error::from_raw_os_error(libc::ENODEV))
+                }
+            });
+            assert_eq!(operations, [None, Some(1)]);
+        }
+        #[test]
+        fn frame_rate_guard_rejects_non_camera_ids_before_opening() {
+            for id in [
+                "",
+                "/dev/video",
+                "/dev/video0/../video1",
+                "/tmp/video0",
+                "https://camera",
+            ] {
+                assert!(keep_frame_rate(id).is_none());
+            }
         }
     }
 }

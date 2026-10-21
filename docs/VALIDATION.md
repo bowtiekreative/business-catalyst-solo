@@ -603,3 +603,33 @@ paints. Generated native input startup is gated behind both validation and
 capture-test features plus explicit environment flags. Normal packages exclude
 these features. Actual desktop Record, physical latency/drift/unplug, fresh OS,
 Google-account and Windows/macOS acceptance remain unverified.
+
+## Native camera motion and backlog repair0.1.4 · 2026-10-20
+
+Physical C922 metadata exposed dynamic exposure reducing selected30fps to15.46.
+Temporarily disabling it settled raw frame delivery at29.999fps. Capture now
+uses an optional V4L2 control guard: change1to0, restore only when still0after
+the child stops, and leave unsupported controls/other changes untouched. Mock
+and ABI checks plus a real capture verified the decision and restoration.
+
+The actual1080p recording plus720p RGBA preview pipeline delivered26.13fps with
+two x264 threads, then30.05fps using up to four available logical CPUs. CRF20,
+veryfast preset, source/preview dimensions and normalized media clock remain.
+Core generated take verification passes exact frame counts, copied interior
+frames, H264/AAC timing and recovery with the changed thread count.
+
+Overlay rendering now has no pending input snapshot and one replaceable result;
+the UI converts/uploads after releasing that mailbox lock. Epoch protection and
+stationary-view retry remain. A regression fixture covers replacement and no
+queued job. Record also has a stable interaction ID: the existing generated
+capture flow failed after an error-widget transition before the fix and passed
+in11.34seconds after it.26studio tests and strict app/core lint pass; core unit
+tests89passed across the main run plus a targeted rerun of three sandbox-denied
+loopback tests. Opt-in hardware/Google/platform scopes are not inferred from them.
+
+The generated-only benchmark script isolates source-clock and filter-clock
+ages. Compressed producer/pipe backpressure was not treated as physical camera
+latency, and output reorder/removal of frame normalization were not adopted.
+Physical camera checks used no microphone, viewed no images, made no takes and
+deleted their temporary media. End-to-end sensor-to-screen delay and OBSBOT
+visual acceptance remain unverified.

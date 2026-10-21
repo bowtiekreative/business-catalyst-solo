@@ -703,8 +703,13 @@ impl SidebarVideo {
         ui.add_space(16.);
         ui.vertical_centered(|ui| {
             ui.add_enabled_ui(self.capture.can_record() && !self.project.loading(), |ui| {
-                let (rect, response) =
-                    ui.allocate_exact_size(egui::vec2(88., 88.), egui::Sense::click());
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(88., 88.), egui::Sense::hover());
+                // Camera/error widgets change during a gesture; keep its input identity.
+                let response = ui.interact(
+                    rect,
+                    egui::Id::new("live-record-button"),
+                    egui::Sense::click(),
+                );
                 ui.painter().circle_filled(rect.center(), 43., CARD);
                 ui.painter()
                     .circle_stroke(rect.center(), 43., Stroke::new(2.0_f32, ACCENT));

@@ -270,6 +270,7 @@ struct CameraProcess {
     child: FfmpegChild,
     readers: Vec<JoinHandle<()>>,
     stopped: bool,
+    frame_rate_guard: Option<devices::FrameRateGuard>,
 }
 impl CameraProcess {
     fn finish(&mut self) {
@@ -281,6 +282,7 @@ impl CameraProcess {
         for reader in self.readers.drain(..) {
             let _ = reader.join();
         }
+        drop(self.frame_rate_guard.take());
     }
 }
 impl Drop for CameraProcess {
@@ -319,6 +321,11 @@ fn spawn_camera(
     shared: Arc<Shared>,
 ) -> Result<CameraProcess> {
     let settings = &manifest.settings;
+    let frame_rate_guard = if generated {
+        None
+    } else {
+        devices::keep_frame_rate(&settings.camera_id)
+    };
     let (preview_width, preview_height) = preview_dimensions(settings.mode);
     let directory = local::existing_directory(root, &manifest.relative())?;
     let mut command = FfmpegCommand::new_with_path(media::tool("ffmpeg")?);
@@ -382,6 +389,10 @@ fn spawn_camera(
         ]);
     }
     command.arg("-filter_complex").arg(format!("[0:v]fps=30,setpts=N/(30*TB),split=2[vrec][vp];[vp]scale={preview_width}:{preview_height},format=rgba[preview];[1:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[a]"));
+    // Two encode threads fell behind in measured 1080p capture.
+    let encode_threads = thread::available_parallelism()
+        .map_or(2, |count| count.get().min(4))
+        .to_string();
     command.args([
         "-map",
         "[vrec]",
@@ -390,7 +401,7 @@ fn spawn_camera(
         "-c:v",
         "libx264",
         "-threads",
-        "2",
+        &encode_threads,
         "-preset",
         "veryfast",
         "-tune",
@@ -498,6 +509,7 @@ fn spawn_camera(
         child,
         readers: vec![frames, errors],
         stopped: false,
+        frame_rate_guard,
     })
 }
 

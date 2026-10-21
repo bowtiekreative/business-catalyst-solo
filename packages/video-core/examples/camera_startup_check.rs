@@ -36,6 +36,7 @@ fn main() -> video_core::Result<()> {
     )?;
     let mut first = None;
     let mut latest = None;
+    let mut arrivals = Vec::new();
     let mut error = None;
     while started.elapsed() < Duration::from_secs(12) {
         for event in session.poll_events() {
@@ -45,8 +46,11 @@ fn main() -> video_core::Result<()> {
         }
         if let Some(frame) = session.latest_preview() {
             first.get_or_insert_with(|| started.elapsed().as_millis());
+            if latest.is_none_or(|(sequence, _, _)| sequence != frame.sequence) {
+                arrivals.push((frame.sequence, Instant::now()));
+            }
             latest = Some((frame.sequence, frame.width, frame.height));
-            if frame.sequence >= 60 {
+            if frame.sequence >= 180 {
                 break;
             }
         }
@@ -64,12 +68,18 @@ fn main() -> video_core::Result<()> {
     drop(session);
     drop(store);
     temporary.close()?;
+    let steady = &arrivals[arrivals.len().saturating_sub(90)..];
+    let preview_fps = steady.first().zip(steady.last()).and_then(|(first, last)| {
+        let elapsed = last.1.duration_since(first.1).as_secs_f64();
+        (elapsed > 0.).then(|| (last.0 - first.0) as f64 / elapsed)
+    });
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "camera":id,"mode":mode,"microphone":"off","takes_created":0,
             "first_preview_ms":first,"last_frame":latest,"error":error,
             "stopped":stopped,"temporary_buffer_removed":true,
+            "settled_preview_fps":preview_fps,
         }))?
     );
     if first.is_none() || error.is_some() || !stopped {

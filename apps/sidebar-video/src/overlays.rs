@@ -3,7 +3,7 @@
 use crate::{Workspace, capture::CaptureUi, inserts::InsertEditor, workspace::Store};
 use eframe::egui;
 use std::{
-    sync::{Arc, mpsc},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 use video_core::{
@@ -35,8 +35,9 @@ struct Job {
 }
 struct Worker {
     sender: mpsc::SyncSender<Job>,
-    receiver: mpsc::Receiver<(u64, Result<RgbaFrame, String>)>,
+    latest: Arc<Mutex<Option<RenderResult>>>,
 }
+type RenderResult = (u64, Result<RgbaFrame, String>);
 struct Draft {
     slot: SlotKey,
     content: OverlayContent,
@@ -200,32 +201,38 @@ impl OverlaysUi {
             }
             self.last_root = root;
         }
-        if let Some(worker) = &self.worker {
-            for (epoch, result) in worker.receiver.try_iter() {
-                if epoch == self.epoch {
-                    match result {
-                        Ok(frame) => {
-                            let image = egui::ColorImage::from_rgba_unmultiplied(
-                                [frame.width as usize, frame.height as usize],
-                                &frame.pixels,
-                            );
-                            match &mut self.texture {
-                                Some(t) => t.set(image, egui::TextureOptions::LINEAR),
-                                None => {
-                                    self.texture = Some(ctx.load_texture(
-                                        "shared-overlay-renderer",
-                                        image,
-                                        egui::TextureOptions::LINEAR,
-                                    ))
-                                }
-                            }
-                            self.error = None;
-                        }
-                        Err(e) => {
-                            self.texture = None;
-                            self.error = Some(e);
+        let completed = self.worker.as_ref().and_then(|worker| {
+            worker
+                .latest
+                .lock()
+                .ok()
+                .and_then(|mut latest| latest.take())
+        });
+        // The mailbox lock is released before conversion and texture upload.
+        if let Some((epoch, result)) = completed
+            && epoch == self.epoch
+        {
+            match result {
+                Ok(frame) => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                        [frame.width as usize, frame.height as usize],
+                        &frame.pixels,
+                    );
+                    match &mut self.texture {
+                        Some(t) => t.set(image, egui::TextureOptions::LINEAR),
+                        None => {
+                            self.texture = Some(ctx.load_texture(
+                                "shared-overlay-renderer",
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            ))
                         }
                     }
+                    self.error = None;
+                }
+                Err(e) => {
+                    self.texture = None;
+                    self.error = Some(e);
                 }
             }
         }
@@ -292,7 +299,11 @@ impl OverlaysUi {
         if let Some(worker) = &self.worker {
             match worker.sender.try_send(job) {
                 Ok(()) => self.last_frame = Some((self.epoch, clock)),
-                Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Full(_)) => {
+                    // A rendezvous receiver may still be finishing its prior
+                    // frame. Retry even for a stationary timeline preview.
+                    ctx.request_repaint_after(Duration::from_millis(16));
+                }
                 Err(mpsc::TrySendError::Disconnected(_)) => {
                     self.worker = None;
                     self.error = Some("Card renderer stopped. Reopen the card to retry.".into());
@@ -484,9 +495,24 @@ impl Drop for OverlaysUi {
         }
     }
 }
+fn render_mailboxes() -> (Worker, mpsc::Receiver<Job>) {
+    // No queued camera snapshot: accept only when rendering can begin now.
+    let (sender, jobs) = mpsc::sync_channel::<Job>(0);
+    let latest = Arc::new(Mutex::new(None));
+    (Worker { sender, latest }, jobs)
+}
+fn publish_render(latest: &Mutex<Option<RenderResult>>, result: RenderResult) -> bool {
+    let previous = match latest.lock() {
+        Ok(mut latest) => latest.replace(result),
+        Err(_) => return false,
+    };
+    // Free a replaced image outside the critical section.
+    drop(previous);
+    true
+}
 fn spawn_renderer(ctx: egui::Context) -> Worker {
-    let (sender, jobs) = mpsc::sync_channel::<Job>(1);
-    let (results, receiver) = mpsc::sync_channel(1);
+    let (worker, jobs) = render_mailboxes();
+    let latest = worker.latest.clone();
     std::thread::spawn(move || {
         let mut renderer = OverlayRenderer::new();
         let mut assets = OverlayAssets::new();
@@ -560,13 +586,13 @@ fn spawn_renderer(ctx: egui::Context) -> Worker {
                 }
                 .map_err(|e| e.to_string())
             })();
-            if results.send((job.epoch, result)).is_err() {
+            if !publish_render(&latest, (job.epoch, result)) {
                 break;
             }
             ctx.request_repaint();
         }
     });
-    Worker { sender, receiver }
+    worker
 }
 
 #[cfg(test)]
@@ -631,10 +657,10 @@ mod tests {
             duration_ms: 5000,
         });
         let (ctx, capture) = (egui::Context::default(), CaptureUi::default());
-        let (sender, _jobs) = mpsc::sync_channel(1);
-        let (results, receiver) = mpsc::sync_channel(1);
+        let (worker, _jobs) = render_mailboxes();
+        let latest = worker.latest.clone();
         let mut ui = OverlaysUi::default();
-        ui.worker = Some(Worker { sender, receiver });
+        ui.worker = Some(worker);
         ui.epoch = 2;
         ui.last_studio = Some(project.studio().clone());
         ui.last_frame = Some((2, 1000 / 33));
@@ -643,11 +669,47 @@ mod tests {
             height: 1,
             pixels: vec![120, 96, 181, 255],
         };
-        results.send((1, Ok(frame()))).unwrap();
+        assert!(publish_render(&latest, (1, Ok(frame()))));
         ui.tick(&project, &capture, 1000, &ctx);
         assert!(ui.texture.is_none());
-        results.send((2, Ok(frame()))).unwrap();
+        assert!(publish_render(&latest, (2, Ok(frame()))));
         ui.tick(&project, &capture, 1000, &ctx);
         assert!(ui.texture.is_some());
+    }
+    #[test]
+    fn render_mailbox_keeps_newest_result_and_never_queues_camera_jobs() {
+        let (worker, jobs) = render_mailboxes();
+        let frame = |value| RgbaFrame {
+            width: 1,
+            height: 1,
+            pixels: vec![value, 96, 181, 255],
+        };
+        assert!(publish_render(&worker.latest, (1, Ok(frame(10)))));
+        assert!(publish_render(&worker.latest, (2, Ok(frame(20)))));
+        let (epoch, result) = worker.latest.lock().unwrap().take().unwrap();
+        assert_eq!(epoch, 2);
+        assert_eq!(result.unwrap().pixels[0], 20);
+        assert!(worker.latest.lock().unwrap().is_none());
+
+        let job = Job {
+            epoch: 3,
+            store: None,
+            root: None,
+            studio: Studio::default(),
+            view: View::Timeline(0),
+            reduced: false,
+            camera: None,
+            cancel: Cancellation::default(),
+        };
+        // Merely keeping the receiver alive cannot retain an old snapshot.
+        let job = match worker.sender.try_send(job) {
+            Err(mpsc::TrySendError::Full(job)) => job,
+            _ => panic!("A busy renderer must not queue a camera job"),
+        };
+        drop(jobs);
+        assert!(matches!(
+            worker.sender.try_send(job),
+            Err(mpsc::TrySendError::Disconnected(_))
+        ));
     }
 }
