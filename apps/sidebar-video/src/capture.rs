@@ -32,12 +32,17 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        paint_size(app, ctx, events, egui::vec2(1480., 1000.))
+    }
+    fn paint_size(
+        app: &mut SidebarVideo,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        size: egui::Vec2,
+    ) -> egui::FullOutput {
         ctx.run(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1480., 1000.),
-                )),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                 focused: true,
                 events,
                 ..Default::default()
@@ -90,6 +95,55 @@ mod tests {
         }]
     }
     #[test]
+    fn canceled_completed_video_import_does_not_queue_media_for_the_project() {
+        let ctx = egui::Context::default();
+        let mut project = Workspace::default();
+        let media: ImportedMedia = serde_json::from_value(serde_json::json!({
+            "relative": "media/completed-before-cancel.mp4",
+            "name": "Cancelled import",
+            "info": {"duration_ms": 1000, "width": 1920, "height": 1080, "has_audio": false}
+        }))
+        .unwrap();
+        let (sender, receiver) = mpsc::channel();
+        sender.send(Message::Imported(media)).unwrap();
+        let mut capture = CaptureUi {
+            pending: Some(Pending {
+                receiver,
+                cancellation: Cancellation::default(),
+            }),
+            ..Default::default()
+        };
+        capture.cancel_operation();
+        capture.poll(&mut project, &ctx);
+        assert!(capture.pending.is_none());
+        assert!(
+            capture.append.is_empty(),
+            "Cancelled import was queued for the project"
+        );
+        assert!(!capture.busy());
+        assert!(capture.error.is_none());
+    }
+    #[test]
+    fn canceled_queued_video_import_is_not_applied_after_waiting_for_project() {
+        let ctx = egui::Context::default();
+        let mut project = Workspace::default();
+        let media: ImportedMedia = serde_json::from_value(serde_json::json!({
+            "relative": "media/waiting-for-project.mp4",
+            "name": "Queued import",
+            "info": {"duration_ms": 1000, "width": 1920, "height": 1080, "has_audio": false}
+        }))
+        .unwrap();
+        let mut capture = CaptureUi::default();
+        capture.queue_import(media);
+        capture.cancel_operation();
+        capture.poll(&mut project, &ctx);
+        assert!(
+            capture.append.is_empty(),
+            "Canceled import stayed queued for the project"
+        );
+        assert!(!capture.busy());
+    }
+    #[test]
     fn choose_camera_opens_settings_without_starting_a_device() {
         let temp = tempfile::tempdir().unwrap();
         let ctx = egui::Context::default();
@@ -117,8 +171,215 @@ mod tests {
             ((bounds.x0 + bounds.x1) / 2.) as f32,
             ((bounds.y0 + bounds.y1) / 2.) as f32,
         );
-        paint(&mut app, &ctx, pointer(pos, true));
-        paint(&mut app, &ctx, pointer(pos, false));
+        assert!(
+            bounds.y1 <= 712.,
+            "Camera setup must fit above the sequence: {bounds:?}"
+        );
+        let pressed = paint(&mut app, &ctx, pointer(pos, true));
+        let badge = pressed
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .find_map(|(_, n)| {
+                (n.label() == Some("Mic off · silent takes")).then(|| n.bounds().unwrap())
+            })
+            .unwrap();
+        assert!(
+            bounds.x1 <= badge.x0
+                || badge.x1 <= bounds.x0
+                || bounds.y1 <= badge.y0
+                || badge.y1 <= bounds.y0,
+            "Camera action and audio badge overlap: {bounds:?} {badge:?}"
+        );
+        let stable = pressed
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, n)| (n.label() == Some("Choose camera…")).then(|| n.bounds().unwrap()))
+            .unwrap();
+        assert_eq!(
+            (bounds.x0, bounds.y0, bounds.x1, bounds.y1),
+            (stable.x0, stable.y0, stable.x1, stable.y1),
+            "Camera setup must not move while clicked"
+        );
+        let released = paint(&mut app, &ctx, pointer(pos, false));
+        let modal_drawn = released
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|(_, n)| n.label() == Some("Camera and microphone"));
+        assert!(
+            app.capture.show_settings,
+            "Camera settings closed; modal drawn={modal_drawn}"
+        );
+        assert!(!app.capture.camera_running());
+        assert!(!app.capture.busy());
+    }
+    #[test]
+    fn minimum_camera_setup_stays_above_sequence_and_accepts_clicks() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        ctx.enable_accesskit();
+        let mut app = SidebarVideo::new();
+        app.project = Workspace::test_project(&temp.path().join("project"));
+        app.name_draft = app.project.studio().name().into();
+        app.capture.devices = Some(DeviceInventory {
+            cameras: vec![],
+            microphones: vec![],
+            message: "Fixture inventory".into(),
+        });
+        let size = egui::vec2(1160., 800.);
+        let frame = paint_size(&mut app, &ctx, vec![], size);
+        let bounds = frame
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, n)| (n.label() == Some("Choose camera…")).then(|| n.bounds().unwrap()))
+            .expect("Camera setup must be drawn");
+        assert!(
+            bounds.y1 <= 512.,
+            "Minimum camera setup is clipped: {bounds:?}"
+        );
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.) as f32,
+            ((bounds.y0 + bounds.y1) / 2.) as f32,
+        );
+        paint_size(&mut app, &ctx, pointer(pos, true), size);
+        paint_size(&mut app, &ctx, pointer(pos, false), size);
+        assert!(app.capture.show_settings);
+        assert!(!app.capture.camera_running());
+    }
+    #[test]
+    fn minimum_busy_stage_reserves_camera_footer() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        ctx.enable_accesskit();
+        let mut app = SidebarVideo::new();
+        app.project = Workspace::test_project(&temp.path().join("project"));
+        app.name_draft = app.project.studio().name().into();
+        let (_sender, receiver) = mpsc::channel();
+        app.capture.pending = Some(Pending {
+            receiver,
+            cancellation: Cancellation::default(),
+        });
+        let frame = paint_size(&mut app, &ctx, vec![], egui::vec2(1160., 800.));
+        let bounds = frame
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, n)| {
+                (n.label().is_some_and(|s| s.starts_with("Record. Hold")))
+                    .then(|| n.bounds().unwrap())
+            })
+            .unwrap();
+        assert!(
+            bounds.y1 <= 437.,
+            "Busy stage must reserve the camera footer: {bounds:?}"
+        );
+    }
+    #[test]
+    fn initial_discovery_selects_preferred_microphone_without_opening_devices() {
+        let ctx = egui::Context::default();
+        let mut capture = CaptureUi::default();
+        let mut project = Workspace::default();
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(Message::Devices(DeviceInventory {
+                cameras: vec![],
+                microphones: vec![video_core::capture::MicrophoneDevice {
+                    id: "preferred.input".into(),
+                    label: "Preferred microphone".into(),
+                }],
+                message: "Fixture inventory".into(),
+            }))
+            .unwrap();
+        capture.pending = Some(Pending {
+            receiver,
+            cancellation: Cancellation::default(),
+        });
+        capture.poll(&mut project, &ctx);
+        assert_eq!(
+            capture.settings.microphone_id.as_deref(),
+            Some("preferred.input"),
+            "New recording setup must select the discovered preferred microphone"
+        );
+        assert!(!capture.camera_running());
+        assert!(!capture.busy());
+    }
+    #[test]
+    fn explicit_microphone_off_or_lost_input_never_switches_to_another_microphone() {
+        let ctx = egui::Context::default();
+        for selected in [None, Some("missing.input".to_owned())] {
+            let mut capture = CaptureUi {
+                microphone_choice_made: true,
+                ..Default::default()
+            };
+            capture.settings.microphone_id = selected;
+            let (sender, receiver) = mpsc::channel();
+            sender
+                .send(Message::Devices(DeviceInventory {
+                    cameras: vec![],
+                    microphones: vec![video_core::capture::MicrophoneDevice {
+                        id: "another.input".into(),
+                        label: "Another microphone".into(),
+                    }],
+                    message: "Fixture".into(),
+                }))
+                .unwrap();
+            capture.pending = Some(Pending {
+                receiver,
+                cancellation: Cancellation::default(),
+            });
+            capture.poll(&mut Workspace::default(), &ctx);
+            assert!(capture.settings.microphone_id.is_none());
+            assert!(capture.audio_label().contains("silent takes"));
+            assert!(!capture.camera_running());
+        }
+    }
+    #[test]
+    fn audio_badge_opens_settings_without_starting_hardware() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        ctx.enable_accesskit();
+        let mut app = SidebarVideo::new();
+        app.project = Workspace::test_project(&temp.path().join("project"));
+        app.name_draft = app.project.studio().name().into();
+        app.capture.devices = Some(DeviceInventory {
+            cameras: vec![],
+            microphones: vec![],
+            message: "Fixture".into(),
+        });
+        let out = paint(&mut app, &ctx, vec![]);
+        let bounds = out
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, n)| {
+                (n.label() == Some("Mic off · silent takes")).then(|| n.bounds().unwrap())
+            })
+            .expect("Visible microphone state in the recording stage");
+        let point = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.) as f32,
+            ((bounds.y0 + bounds.y1) / 2.) as f32,
+        );
+        paint(&mut app, &ctx, pointer(point, true));
+        paint(&mut app, &ctx, pointer(point, false));
         assert!(app.capture.show_settings);
         assert!(!app.capture.camera_running());
         assert!(!app.capture.busy());
@@ -207,6 +468,10 @@ mod tests {
         until(&mut app, &ctx, |a| {
             a.capture.can_record() && a.capture.texture.is_some()
         });
+        assert!(
+            app.capture.frame_waker,
+            "The live UI must receive frame-ready repaint notifications"
+        );
         let session = app.capture.session.as_ref().unwrap().status().session_id;
         app.request(Intent::New, &ctx);
         assert!(app.capture.camera_running());
@@ -214,9 +479,26 @@ mod tests {
         // A held pointer released outside the control is one complete clip.
         paint(&mut app, &ctx, pointer(pos, true));
         wait(&mut app, &ctx, 500);
+        let store = app.project.store().unwrap();
+        let blocked_project = store.lock().unwrap();
         paint(&mut app, &ctx, pointer(egui::pos2(10., 120.), false));
         app.name_draft = "Typed while finishing".into();
         assert!(app.flush_name());
+        until(&mut app, &ctx, |a| {
+            a.capture
+                .append
+                .iter()
+                .any(|item| matches!(item, Append::Take(_)))
+        });
+        app.capture.cancel_operation();
+        assert!(
+            app.capture
+                .append
+                .iter()
+                .any(|item| matches!(item, Append::Take(_))),
+            "Canceling imports must retain recorded takes awaiting the project lock"
+        );
+        drop(blocked_project);
         until(&mut app, &ctx, |a| a.project.studio().clips().len() == 1);
         assert_eq!(app.project.studio().name(), "Typed while finishing");
         // Two short taps produce exactly one long take.
@@ -302,10 +584,12 @@ struct Pending {
 #[derive(Default)]
 pub struct CaptureUi {
     session: Option<CaptureSession>,
+    frame_waker: bool,
     pending: Option<Pending>,
     append: VecDeque<Append>,
     pub devices: Option<DeviceInventory>,
     pub settings: CaptureSettings,
+    microphone_choice_made: bool,
     pub show_settings: bool,
     pub recoveries: Vec<RecoverySession>,
     pub message: String,
@@ -318,6 +602,18 @@ pub struct CaptureUi {
     autosave: bool,
 }
 impl CaptureUi {
+    pub fn audio_label(&self) -> String {
+        match &self.settings.microphone_id {
+            None => "Mic off · silent takes".into(),
+            Some(id) => format!(
+                "Mic: {}",
+                self.devices
+                    .as_ref()
+                    .and_then(|d| d.microphones.iter().find(|m| &m.id == id))
+                    .map_or("Selected microphone", |m| m.label.as_str())
+            ),
+        }
+    }
     pub fn queue_import(&mut self, media: ImportedMedia) {
         self.append.push_back(Append::Import(media));
     }
@@ -439,6 +735,7 @@ impl CaptureUi {
             return;
         };
         let settings = self.settings.clone();
+        self.microphone_choice_made = true;
         self.texture = None;
         self.last_frame = None;
         self.start(ctx, "Starting camera…", move |token| {
@@ -498,10 +795,13 @@ impl CaptureUi {
         self.pointer_held = false;
         self.space_held = false;
     }
-    pub fn cancel_operation(&self) {
+    pub fn cancel_operation(&mut self) {
         if let Some(p) = &self.pending {
             p.cancellation.cancel();
         }
+        // Imports may already be waiting for the project lock; recorded takes
+        // still need to reach the timeline and retain their recovery metadata.
+        self.append.retain(|item| matches!(item, Append::Take(_)));
     }
     fn press(&mut self) -> bool {
         match self
@@ -674,6 +974,9 @@ impl CaptureUi {
                 .take()
                 .is_some_and(|p| p.cancellation.is_cancelled());
             match message {
+                _ if cancelled && !matches!(&message, Message::Started(_)) => {
+                    self.message = "Media operation cancelled.".into();
+                }
                 Message::Devices(devices) => {
                     if !devices
                         .cameras
@@ -696,6 +999,13 @@ impl CaptureUi {
                     {
                         self.settings.microphone_id = None;
                     }
+                    if !self.microphone_choice_made {
+                        if self.settings.microphone_id.is_none() {
+                            self.settings.microphone_id =
+                                devices.microphones.first().map(|m| m.id.clone());
+                        }
+                        self.microphone_choice_made = self.settings.microphone_id.is_some();
+                    }
                     self.message = devices.message.clone();
                     self.devices = Some(devices);
                 }
@@ -705,6 +1015,9 @@ impl CaptureUi {
                         let _ = std::thread::spawn(move || drop(session));
                         self.message = "Camera start cancelled.".into();
                     } else {
+                        let repaint = ctx.clone();
+                        self.frame_waker =
+                            session.set_preview_waker(move || repaint.request_repaint());
                         self.session = Some(session);
                         self.show_settings = false;
                     }
@@ -809,7 +1122,13 @@ impl CaptureUi {
             self.autosave = false;
         }
         if self.pending.is_some() || !self.append.is_empty() || self.session.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(16));
+            // Frames wake paint directly; retain a status fallback after capture stops.
+            let delay = if self.frame_waker && self.pending.is_none() && self.append.is_empty() {
+                100
+            } else {
+                16
+            };
+            ctx.request_repaint_after(Duration::from_millis(delay));
         }
         selected
     }
@@ -845,17 +1164,19 @@ impl CaptureUi {
                     }
                     let microphone_label=devices.microphones.iter().find(|m|Some(&m.id)==self.settings.microphone_id.as_ref()).map_or("Microphone off",|m|m.label.as_str());
                     egui::ComboBox::from_label("Microphone").selected_text(microphone_label).show_ui(ui,|ui|{
-                        ui.selectable_value(&mut self.settings.microphone_id,None,"Microphone off");
-                        for m in &devices.microphones {ui.selectable_value(&mut self.settings.microphone_id,Some(m.id.clone()),&m.label);}
+                        if ui.selectable_value(&mut self.settings.microphone_id,None,"Microphone off").clicked(){self.microphone_choice_made=true;}
+                        for m in &devices.microphones {if ui.selectable_value(&mut self.settings.microphone_id,Some(m.id.clone()),&m.label).clicked(){self.microphone_choice_made=true;}}
                     });
                 }
                 ui.add(egui::Slider::new(&mut self.settings.tap_threshold_ms,50..=2000).text("Tap threshold (ms)"));
             });
+            if self.settings.microphone_id.is_none(){ui.colored_label(egui::Color32::from_rgb(160,30,45),"Microphone off: new takes will contain silence. Choose a microphone to record sound.");}
             if !self.message.is_empty(){ui.label(&self.message);}
             if let Some(error)=&self.error{ui.colored_label(egui::Color32::from_rgb(160,30,45),error);}
             ui.horizontal(|ui|{
                 if ui.add_enabled(self.can_leave(),egui::Button::new("Refresh devices")).clicked(){self.refresh(ctx);}
-                if ui.add_enabled(self.can_leave() && !project.busy() && project.store().is_some() && !self.settings.camera_id.is_empty(),egui::Button::new("Enable camera")).clicked(){self.enable(project,ctx);}
+                let enable_label=if self.settings.microphone_id.is_some(){"Enable camera + microphone"}else{"Enable camera without audio"};
+                if ui.add_enabled(self.can_leave() && !project.busy() && project.store().is_some() && !self.settings.camera_id.is_empty(),egui::Button::new(enable_label)).clicked(){self.enable(project,ctx);}
                 if ui.button("Close").clicked(){self.show_settings=false;}
             });
             if self.busy(){ui.spinner();}

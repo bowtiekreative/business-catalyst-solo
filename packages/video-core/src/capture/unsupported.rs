@@ -25,6 +25,9 @@ impl CaptureSession {
     pub fn latest_preview(&self) -> Option<Arc<PreviewFrame>> {
         None
     }
+    pub fn set_preview_waker(&self, _wake: impl Fn() + Send + Sync + 'static) -> bool {
+        false
+    }
     pub fn poll_events(&self) -> Vec<CaptureEvent> {
         Vec::new()
     }

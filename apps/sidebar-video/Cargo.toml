@@ -1,6 +1,6 @@
 [package]
 name = "sidebar-video"
-version = "0.1.4"
+version = "0.1.9"
 edition.workspace = true
 rust-version.workspace = true
 

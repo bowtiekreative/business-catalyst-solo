@@ -57,8 +57,15 @@ impl InsertEditor {
                 Err(mpsc::TryRecvError::Disconnected) => Some(Err("Insert worker stopped".into())),
             });
         if let Some(result) = result {
-            let replace = self.pending.as_ref().is_some_and(|p| p.replace);
-            self.pending = None;
+            let pending = self.pending.take().expect("pending insert outcome");
+            if pending.cancel.is_cancelled() {
+                // Publication can finish before Cancel is observed. Keep any
+                // saved source, but never apply its late result to the draft.
+                // Feedback also prevents an automatic thumbnail-load retry.
+                self.error = Some("Insert preparation canceled. Your draft is unchanged; any imported media stays saved.".into());
+                return;
+            }
+            let replace = pending.replace;
             match result {
                 Ok(Some(prepared)) => {
                     self.duration_ms = prepared.duration_ms;
@@ -247,6 +254,9 @@ impl InsertEditor {
         }
         let Some(insert) = content.insert.as_mut() else {
             ui.label("Choose media to create an insert.");
+            if let Some(error) = &self.error {
+                ui.colored_label(egui::Color32::from_rgb(160, 30, 45), error);
+            }
             return;
         };
         if self.loaded_path.as_deref() != Some(insert.path())
@@ -511,6 +521,7 @@ fn draw_boxes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use video_core::OverlayKind;
     fn content() -> OverlayContent {
         OverlayContent::from_insert(
             "Source",
@@ -554,6 +565,104 @@ mod tests {
         assert_eq!(draft.insert.unwrap().zoom.end.percent, 225);
         assert!(!editor.busy());
         assert!(editor.texture.is_some());
+    }
+    #[test]
+    fn canceled_insert_import_does_not_replace_draft_or_thumbnail_after_completion() {
+        let ctx = egui::Context::default();
+        let mut editor = InsertEditor::default();
+        let original = content();
+        let mut draft = original.clone();
+        editor.loaded_path = Some("media/photo.png".into());
+        let texture = ctx.load_texture(
+            "original-generated-thumbnail",
+            egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+            egui::TextureOptions::LINEAR,
+        );
+        let original_texture = texture.id();
+        editor.texture = Some(texture);
+        let (sender, receiver) = mpsc::channel();
+        editor.pending = Some(Pending {
+            receiver,
+            cancel: Cancellation::default(),
+            progress: Arc::new(AtomicU64::new(0)),
+            replace: true,
+        });
+        let mut imported = original.clone();
+        imported.insert.as_mut().unwrap().source = InsertSource::Photo {
+            path: "media/newly-published.png".into(),
+        };
+        // Force the completion/cancel interleaving without a picker, decoding,
+        // filesystem changes or a physical camera.
+        sender
+            .send(Ok(Some(Prepared {
+                content: imported,
+                frame: RgbaFrame {
+                    width: 2,
+                    height: 2,
+                    pixels: [120, 96, 181, 255].repeat(4),
+                },
+                duration_ms: None,
+            })))
+            .unwrap();
+        editor.cancel();
+        editor.poll(&mut draft, &ctx);
+        assert_eq!(
+            draft, original,
+            "Canceled import replaced the current insert"
+        );
+        assert_eq!(editor.loaded_path.as_deref(), Some("media/photo.png"));
+        assert_eq!(editor.texture.as_ref().unwrap().id(), original_texture);
+        assert!(!editor.busy());
+    }
+    #[test]
+    fn first_insert_import_failure_is_visible_without_an_existing_insert() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut editor = InsertEditor::default();
+        let mut draft = OverlayContent::new(OverlayKind::Photo, "New insert");
+        let (sender, receiver) = mpsc::channel();
+        editor.pending = Some(Pending {
+            receiver,
+            cancel: Cancellation::default(),
+            progress: Arc::new(AtomicU64::new(0)),
+            replace: true,
+        });
+        let error = "Generated import failure: source cannot be decoded";
+        sender.send(Err(error.into())).unwrap();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800., 600.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    editor.show(
+                        ui,
+                        &Workspace::default(),
+                        &mut draft,
+                        OutputSize {
+                            width: 1280,
+                            height: 720,
+                        },
+                    );
+                });
+            },
+        );
+        assert_eq!(editor.error.as_deref(), Some(error));
+        assert!(draft.insert.is_none());
+        assert!(
+            output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.label().or_else(|| node.value()) == Some(error)),
+            "Failed first insert import has no visible error"
+        );
     }
     #[test]
     fn pointer_moves_and_resizes_only_selected_zoom_box() {

@@ -1,5 +1,5 @@
 //! Opt-in, bounded diagnostics for this application's native input routing.
-//! Counts/state flags and static Project/Record control rectangles only. Never input
+//! Counts/state flags and static Project/Record/Preview control rectangles only. Never input
 //! contents, pointer positions, project paths or window titles.
 use eframe::egui;
 use serde_json::json;
@@ -16,6 +16,8 @@ pub(super) struct Flags {
     pub project_busy: bool,
     pub project_loading: bool,
     pub output_busy: bool,
+    pub sequence_preview_open: bool,
+    pub export_pending: bool,
     pub confirm: bool,
     pub version: bool,
     pub trim: bool,
@@ -77,6 +79,11 @@ struct RecordControl {
 }
 static RECORD_CONTROL: Mutex<Option<RecordControl>> = Mutex::new(None);
 static RECORD_TOGGLE: Mutex<Option<RecordControl>> = Mutex::new(None);
+static PREVIEW_CONTROL: Mutex<Option<RecordControl>> = Mutex::new(None);
+
+pub(super) fn preview_control(response: &egui::Response) {
+    control(&PREVIEW_CONTROL, response, response.rect);
+}
 
 pub(super) fn record_toggle(response: &egui::Response) {
     control(&RECORD_TOGGLE, response, response.rect);
@@ -126,6 +133,7 @@ struct Probe {
     previous_menu: Option<Menu>,
     previous_record: Option<RecordControl>,
     previous_toggle: Option<RecordControl>,
+    previous_preview: Option<RecordControl>,
 }
 
 pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
@@ -148,6 +156,7 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
         previous_menu: None,
         previous_record: None,
         previous_toggle: None,
+        previous_preview: None,
     });
     let Ok(mut probe) = PROBE.lock() else { return };
     if probe.lines >= 100 {
@@ -191,13 +200,15 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
     let menu = PROJECT_MENU.lock().ok().and_then(|m| *m);
     let control = RECORD_CONTROL.lock().ok().and_then(|control| *control);
     let toggle = RECORD_TOGGLE.lock().ok().and_then(|control| *control);
+    let preview = PREVIEW_CONTROL.lock().ok().and_then(|control| *control);
     probe.paint_calls += 1;
     // Save the bounded quota for state changes and clicks, not live-video paints.
     // Never force repaint: that could hide a wake-up failure under investigation.
     let changed = probe.previous != Some((flags, routing))
         || probe.previous_menu != menu
         || probe.previous_record != control
-        || probe.previous_toggle != toggle;
+        || probe.previous_toggle != toggle
+        || probe.previous_preview != preview;
     if probe.paint_calls > 4 && !changed && probe.counts.buttons == 0 {
         return;
     }
@@ -219,10 +230,12 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
         "project_menu":menu.map(|m|json!({"label":"Project","rect":m.rect,"enabled":m.enabled,"clicked":m.clicked,"popup_open":m.popup_open})),
         "record_control":control.map(|control|json!({"rect":control.rect,"enabled":control.enabled,"down":control.down,"clicked":control.clicked})),
         "record_toggle":toggle.map(|control|json!({"rect":control.rect,"enabled":control.enabled,"down":control.down,"clicked":control.clicked})),
+        "preview_control":preview.map(|control|json!({"rect":control.rect,"enabled":control.enabled,"down":control.down,"clicked":control.clicked})),
     });
     let flags_record = json!({
         "project_present":flags.project_present, "project_busy":flags.project_busy,
         "project_loading":flags.project_loading, "output_busy":flags.output_busy,
+        "sequence_preview_open":flags.sequence_preview_open, "export_pending":flags.export_pending,
         "confirm":flags.confirm, "version_dialog":flags.version, "trim_dialog":flags.trim,
         "overlay_editing":flags.overlay_editing, "overlay_busy":flags.overlay_busy,
         "ai_open":flags.ai_open, "ai_busy":flags.ai_busy,
@@ -243,4 +256,5 @@ pub(super) fn sample(ctx: &egui::Context, flags: Flags) {
     probe.previous_menu = menu;
     probe.previous_record = control;
     probe.previous_toggle = toggle;
+    probe.previous_preview = preview;
 }

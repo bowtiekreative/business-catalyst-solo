@@ -1,5 +1,5 @@
-//! Explicit sequence builds. Immutable submitted snapshots and save ACKs never
-//! replace a newer draft; progress is the core's actual encoded time.
+//! Direct timeline preview and explicit MP4 export. Submitted snapshots and save
+//! ACKs never replace newer drafts; export progress is actual encoded time.
 use crate::{Workspace, capture::CaptureUi};
 use eframe::egui;
 use std::{
@@ -21,6 +21,18 @@ pub enum Action {
     Preview,
     Export,
 }
+#[derive(Debug, PartialEq, Eq)]
+enum Dispatch {
+    Mp4Export,
+    Player,
+}
+fn dispatch(action: Action) -> Dispatch {
+    if matches!(action, Action::Preview) && cfg!(target_os = "linux") {
+        Dispatch::Player
+    } else {
+        Dispatch::Mp4Export
+    }
+}
 struct Built {
     snapshot: Studio,
     action: Action,
@@ -32,11 +44,22 @@ struct Pending {
     progress: Arc<Mutex<Option<ExportProgress>>>,
     cancel: Cancellation,
 }
+struct Opening {
+    receiver: mpsc::Receiver<Result<SequencePlayer, String>>,
+    snapshot: Studio,
+    reduced_motion: bool,
+    prepared_mp4: bool,
+}
+impl Opening {
+    fn is_current(&self, project: &Workspace, reduced_motion: bool) -> bool {
+        project.studio() == &self.snapshot && reduced_motion == self.reduced_motion
+    }
+}
 #[derive(Default)]
 pub struct OutputUi {
     waiting_for_camera: Option<(Action, bool)>,
     pending: Option<Pending>,
-    player_pending: Option<mpsc::Receiver<Result<SequencePlayer, String>>>,
+    player_pending: Option<Opening>,
     folder_pending: Option<mpsc::Receiver<Result<(), String>>>,
     player: Option<SequencePlayer>,
     cached: Option<(Studio, bool, ExportArtifact)>,
@@ -47,6 +70,10 @@ pub struct OutputUi {
     pub muted: bool,
 }
 impl OutputUi {
+    #[cfg(feature = "validation-screenshot")]
+    pub fn probe_preview_state(&self) -> (bool, bool) {
+        (self.player.is_some(), self.pending.is_some())
+    }
     pub fn busy(&self) -> bool {
         self.waiting_for_camera.is_some() || self.pending.is_some() || self.player_pending.is_some()
     }
@@ -67,14 +94,19 @@ impl OutputUi {
             self.stop_preview();
             self.error = None;
             self.progress = None;
-            self.status =
-                "Stopping the camera and saving your take before preparing the sequence…".into();
+            self.status = match action {
+                Action::Preview => {
+                    "Stopping the camera and saving your take before opening preview…"
+                }
+                Action::Export => "Stopping the camera and saving your take before exporting…",
+            }
+            .into();
             self.waiting_for_camera = Some((action, reduced_motion));
             capture.stop();
             ctx.request_repaint();
         }
     }
-    /// Capture autosaves must finish before the export takes its immutable snapshot.
+    /// Capture autosaves finish before preview/export takes its immutable snapshot.
     pub fn after_capture(
         &mut self,
         project: &mut Workspace,
@@ -113,6 +145,25 @@ impl OutputUi {
             return;
         };
         let snapshot = project.studio().clone();
+        if dispatch(action) == Dispatch::Player {
+            self.play_sequence(project, snapshot, ctx, reduced_motion, None);
+            return;
+        }
+        #[cfg(not(target_os = "linux"))]
+        if matches!(action, Action::Preview)
+            && let Some((saved, motion, artifact)) = &self.cached
+            && saved == &snapshot
+            && *motion == reduced_motion
+        {
+            self.play_sequence(
+                project,
+                snapshot,
+                ctx,
+                reduced_motion,
+                Some(artifact.clone()),
+            );
+            return;
+        }
         let plan = match ExportPlan::new(&snapshot) {
             Ok(plan) => plan,
             Err(e) => {
@@ -125,15 +176,11 @@ impl OutputUi {
             .contains(&ExportWarning::VerticalLongerThanThreeMinutes);
         self.error = None;
         self.progress = None;
-        self.status = "Preparing your sequence…".into();
-        if matches!(action, Action::Preview)
-            && let Some((saved, motion, artifact)) = &self.cached
-            && saved == &snapshot
-            && *motion == reduced_motion
-        {
-            self.play(project, artifact.clone(), ctx);
-            return;
+        self.status = match action {
+            Action::Preview => "Preparing a rendered compatibility preview…",
+            Action::Export => "Preparing MP4 export…",
         }
+        .into();
         self.stop_preview();
         let (receiver, progress, cancel) = {
             let (sender, receiver) = mpsc::channel();
@@ -187,14 +234,32 @@ impl OutputUi {
         });
         project.set_output_busy(true);
     }
-    fn play(&mut self, project: &mut Workspace, artifact: ExportArtifact, ctx: &egui::Context) {
+    fn play_sequence(
+        &mut self,
+        project: &mut Workspace,
+        snapshot: Studio,
+        ctx: &egui::Context,
+        reduced_motion: bool,
+        artifact: Option<ExportArtifact>,
+    ) {
         let Some(store) = project.store() else {
             return;
         };
         self.stop_preview();
+        self.error = None;
+        self.progress = None;
+        self.notice = false;
+        let prepared_mp4 = artifact.is_some();
+        self.status = if prepared_mp4 {
+            "Opening rendered compatibility preview…"
+        } else {
+            "Opening timeline preview directly…"
+        }
+        .into();
         let (sender, receiver) = mpsc::channel();
         let ctx = ctx.clone();
         let muted = self.muted;
+        let submitted = snapshot.clone();
         match std::thread::Builder::new()
             .name("storyfold-sequence-player".into())
             .spawn(move || {
@@ -202,24 +267,41 @@ impl OutputUi {
                     .lock()
                     .map_err(|_| "Project worker failed".to_owned())
                     .and_then(|store| {
-                        SequencePlayer::start(&store, &artifact.relative_path, muted)
-                            .map_err(|e| e.to_string())
+                        match artifact {
+                            Some(artifact) => SequencePlayer::start(&store, &artifact.relative_path, muted).map_err(|e| e.to_string()),
+                            None => {
+                                #[cfg(target_os = "linux")]
+                                { SequencePlayer::start_timeline(&store, &snapshot, muted, reduced_motion).map_err(|e| e.to_string()) }
+                                #[cfg(not(target_os = "linux"))]
+                                { Err("Direct timeline preview is available on Linux; use the rendered compatibility preview on this platform.".into()) }
+                            }
+                        }
                     });
                 let _ = sender.send(result);
                 ctx.request_repaint();
             }) {
             Ok(_) => {
-                self.player_pending = Some(receiver);
+                self.player_pending = Some(Opening {
+                    receiver,
+                    snapshot: submitted,
+                    reduced_motion,
+                    prepared_mp4,
+                });
                 project.set_output_busy(true);
-                self.status = "Opening sequence preview…".into();
             }
-            Err(e) => self.error = Some(e.to_string()),
+            Err(e) => {
+                self.error = Some(e.to_string());
+                self.status = "Could not open timeline preview.".into();
+            }
         }
     }
     pub fn stop_preview(&mut self) {
         if let Some(player) = self.player.take() {
             let _ = std::thread::spawn(move || drop(player));
         }
+    }
+    pub fn encoding_changed(&mut self) {
+        self.cached = None;
     }
     pub fn reset(&mut self) {
         self.waiting_for_camera = None;
@@ -274,15 +356,25 @@ impl OutputUi {
                         )
                     });
                     self.cached = Some((
-                        message.snapshot,
+                        message.snapshot.clone(),
                         message.reduced_motion,
                         outcome.artifact.clone(),
                     ));
                     if matches!(message.action, Action::Preview) {
                         if current {
-                            self.play(project, outcome.artifact, ctx);
+                            let warning = self.error.clone();
+                            self.play_sequence(
+                                project,
+                                message.snapshot,
+                                ctx,
+                                message.reduced_motion,
+                                Some(outcome.artifact),
+                            );
+                            if self.error.is_none() {
+                                self.error = warning;
+                            }
                         } else {
-                            self.error=Some("Preview was built from earlier edits. Press Preview sequence again to prepare your latest timeline.".into());
+                            self.error = Some("The rendered compatibility preview uses earlier edits. Your newer timeline is intact; press Preview sequence again.".into());
                         }
                     }
                 }
@@ -295,7 +387,7 @@ impl OutputUi {
         let player = self
             .player_pending
             .as_ref()
-            .and_then(|p| match p.try_recv() {
+            .and_then(|p| match p.receiver.try_recv() {
                 Ok(m) => Some(m),
                 Err(mpsc::TryRecvError::Empty) => None,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -303,14 +395,26 @@ impl OutputUi {
                 }
             });
         if let Some(player) = player {
-            self.player_pending = None;
+            let opening = self.player_pending.take().unwrap();
             project.set_output_busy(false);
             match player {
-                Ok(player) => {
+                Ok(player) if opening.is_current(project, reduced_motion) => {
                     self.player = Some(player);
-                    self.status="Sequence preview opened. Use the visible Play/Pause, seek bar and fullscreen controls. The preview stays open at the end.".into();
+                    self.status = if opening.prepared_mp4 {
+                        "Rendered compatibility preview opened. Use Play/Pause, seek and fullscreen."
+                    } else {
+                        "Timeline preview opened without making an MP4. Use Play/Pause, seek and fullscreen. Export MP4 saves a finished video."
+                    }.into();
+                }
+                Ok(player) => {
+                    let _ = std::thread::spawn(move || drop(player));
+                    self.error = Some("The timeline changed while preview was opening. Your newer edits are intact; press Preview sequence again to view them.".into());
+                    self.status = "Earlier preview closed.".into();
                 }
                 Err(e) => {
+                    if opening.prepared_mp4 {
+                        self.cached = None;
+                    }
                     self.error = Some(e);
                     self.status = "Could not open sequence preview.".into();
                 }
@@ -322,7 +426,7 @@ impl OutputUi {
                 Ok(Some(success)) => {
                     self.stop_preview();
                     if !success {
-                        self.error=Some("The native player could not decode this MP4. Export again to prepare a fresh sequence.".into());
+                        self.error=Some("The native player could not continue this timeline. Source media is unchanged; review the sequence and try Preview again.".into());
                     }
                 }
                 Err(e) => {
@@ -451,6 +555,10 @@ impl Drop for OutputUi {
             p.cancel.cancel();
         }
         self.stop_preview();
+        if let Some(opening) = self.player_pending.take() {
+            // A queued successful startup owns a native player/runtime too.
+            let _ = std::thread::spawn(move || drop(opening));
+        }
     }
 }
 
@@ -458,6 +566,24 @@ impl Drop for OutputUi {
 mod tests {
     use super::*;
     use video_core::{Edit, Orientation};
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn uncached_preview_dispatch_bypasses_mp4_export_and_save() {
+        assert_eq!(
+            dispatch(Action::Preview),
+            Dispatch::Player,
+            "Immediate preview omitted: an uncached Preview still enters MP4 export/save instead of the timeline player"
+        );
+    }
+    #[test]
+    fn export_dispatch_always_uses_explicit_mp4_pipeline() {
+        assert_eq!(dispatch(Action::Export), Dispatch::Mp4Export);
+    }
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn non_linux_preview_uses_rendered_compatibility_pipeline() {
+        assert_eq!(dispatch(Action::Preview), Dispatch::Mp4Export);
+    }
     fn result() -> ExportOutcome {
         ExportOutcome {
             artifact: ExportArtifact {
@@ -503,27 +629,32 @@ mod tests {
         assert!(ui.cached.is_some());
     }
     #[test]
-    fn changed_motion_preference_prevents_automatic_old_preview() {
+    fn encoding_change_invalidates_preview_without_resetting_status() {
         let mut ui = OutputUi::default();
+        let project = Workspace::default();
+        ui.cached = Some((project.studio().clone(), false, result().artifact));
+        ui.status = "Preview is open".into();
+        ui.encoding_changed();
+        assert!(ui.cached.is_none());
+        assert_eq!(ui.status, "Preview is open");
+        assert!(!ui.busy());
+    }
+    #[test]
+    fn preview_startup_binding_requires_submitted_snapshot_and_motion() {
         let mut project = Workspace::default();
         let snapshot = project.studio().clone();
-        let sender = pending(&mut ui, &mut project);
-        sender
-            .send(Built {
-                snapshot,
-                action: Action::Preview,
-                reduced_motion: false,
-                result: Ok(result()),
-            })
-            .unwrap();
-        ui.poll(&mut project, &egui::Context::default(), true);
-        assert!(ui.player_pending.is_none());
-        assert!(
-            ui.error
-                .as_deref()
-                .is_some_and(|e| e.contains("earlier edits"))
-        );
-        assert!(!project.busy());
+        let (_sender, receiver) = mpsc::channel();
+        let opening = Opening {
+            receiver,
+            snapshot,
+            reduced_motion: false,
+            prepared_mp4: false,
+        };
+        assert!(opening.is_current(&project, false));
+        assert!(!opening.is_current(&project, true));
+        project.edit(Edit::Rename("Typed while preview opens".into()));
+        assert!(!opening.is_current(&project, false));
+        assert!(project.dirty());
     }
     #[test]
     fn disconnected_worker_clears_loading_without_acknowledging_a_save() {
@@ -537,9 +668,98 @@ mod tests {
         assert!(ui.error.is_some());
         assert!(ui.cached.is_none());
     }
+    #[test]
+    fn failed_direct_preview_start_keeps_export_cache_and_newer_draft() {
+        for newer_draft in [false, true] {
+            let mut ui = OutputUi::default();
+            let mut project = Workspace::default();
+            let source = project.studio().next_media_id();
+            project.edit(Edit::AddMedia {
+                path: "media/generated.mp4".into(),
+                duration_ms: 1000,
+            });
+            project.edit(Edit::AddClip {
+                source,
+                name: "Generated take".into(),
+                in_ms: 0,
+                out_ms: 1000,
+            });
+            assert!(ExportPlan::new(project.studio()).is_ok());
+            ui.cached = Some((project.studio().clone(), false, result().artifact));
+            let submitted = project.studio().clone();
+            if newer_draft {
+                project.edit(Edit::Rename("Newer unsaved edits".into()));
+            }
+            let draft = project.studio().clone();
+            let (sender, receiver) = mpsc::channel();
+            ui.player_pending = Some(Opening {
+                receiver,
+                snapshot: submitted,
+                reduced_motion: false,
+                prepared_mp4: false,
+            });
+            project.set_output_busy(true);
+            sender
+                .send(Err("A timeline source is missing".into()))
+                .unwrap();
+            ui.poll(&mut project, &egui::Context::default(), false);
+            assert!(!ui.busy() && !project.busy());
+            assert!(ui.error.is_some());
+            assert_eq!(project.studio(), &draft);
+            assert!(project.dirty());
+            assert!(
+                ui.cached.is_some(),
+                "Direct preview does not consume or invalidate an existing export"
+            );
+        }
+    }
+    #[test]
+    fn disconnected_direct_preview_worker_releases_guard_without_save_ack() {
+        let mut ui = OutputUi::default();
+        let mut project = Workspace::default();
+        let snapshot = project.studio().clone();
+        let (sender, receiver) = mpsc::channel();
+        ui.player_pending = Some(Opening {
+            receiver,
+            snapshot,
+            reduced_motion: false,
+            prepared_mp4: false,
+        });
+        project.set_output_busy(true);
+        project.edit(Edit::Rename("Unchanged newer draft".into()));
+        drop(sender);
+        ui.poll(&mut project, &egui::Context::default(), false);
+        assert!(!ui.busy() && !project.busy());
+        assert!(ui.error.is_some());
+        assert!(project.dirty());
+        assert_eq!(project.studio().name(), "Unchanged newer draft");
+        assert!(ui.pending.is_none());
+    }
+    #[test]
+    fn failed_rendered_compatibility_preview_invalidates_its_export_cache() {
+        let mut ui = OutputUi::default();
+        let mut project = Workspace::default();
+        let snapshot = project.studio().clone();
+        ui.cached = Some((snapshot.clone(), false, result().artifact));
+        let (sender, receiver) = mpsc::channel();
+        ui.player_pending = Some(Opening {
+            receiver,
+            snapshot,
+            reduced_motion: false,
+            prepared_mp4: true,
+        });
+        project.set_output_busy(true);
+        project.edit(Edit::Rename("Keep newer compatibility edits".into()));
+        sender.send(Err("Prepared MP4 is missing".into())).unwrap();
+        ui.poll(&mut project, &egui::Context::default(), false);
+        assert!(!ui.busy() && !project.busy());
+        assert!(ui.cached.is_none());
+        assert!(project.dirty());
+        assert_eq!(project.studio().name(), "Keep newer compatibility edits");
+    }
     #[cfg(all(feature = "capture-test", target_os = "linux"))]
     #[test]
-    #[ignore = "Generated-only export/controller/native player integration; run under Xvfb, muted"]
+    #[ignore = "Generated-only export/cancel and direct timeline preview/no-write integration; run under Xvfb, muted"]
     fn generated_sequence_controls_cache_cancel_and_preserve_newer_edits() {
         use crate::{SidebarVideo, configure};
         use std::{fs, process::Command, time::Instant};
@@ -664,19 +884,52 @@ mod tests {
         assert_eq!(app.project.studio().name(), "Newer local edits");
         assert_eq!(video_core::ProjectStore::open(&folder).unwrap().1, before);
         assert_eq!(count(), 1);
+        let json_before_preview = fs::read(folder.join("project.json")).unwrap();
+        // Fresh fixture projects initialize main; inspect its local ref without
+        // introducing app shell/Git helpers solely for this no-write assertion.
+        let head = || fs::read(folder.join(".git/refs/heads/main")).unwrap();
+        let head_before_preview = head();
+        app.output
+            .request(Action::Preview, &mut app.project, &app.capture, &ctx, false);
+        assert!(
+            app.output.pending.is_none(),
+            "Preview must never start an export worker"
+        );
+        assert!(app.output.player_pending.is_some());
+        assert!(app.output.progress.is_none());
+        assert!(app.output.status.contains("directly"));
+        until(&mut app, &ctx, |a| {
+            a.output.player.is_some() || a.output.error.is_some()
+        });
+        assert!(app.output.error.is_none(), "{:?}", app.output.error);
+        assert_eq!(count(), 1, "Direct preview must not create an MP4");
+        assert!(
+            app.project.dirty(),
+            "Preview must not acknowledge a project save"
+        );
+        app.output
+            .request(Action::Preview, &mut app.project, &app.capture, &ctx, false);
+        app.name_draft = "Typed while preview opens".into();
+        assert!(app.flush_name());
+        until(&mut app, &ctx, |a| !a.output.busy());
+        assert!(
+            app.output.player.is_none(),
+            "A stale startup ACK must close its earlier preview"
+        );
+        assert!(
+            app.output
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("timeline changed"))
+        );
+        assert_eq!(app.project.studio().name(), "Typed while preview opens");
+        assert_eq!(count(), 1);
         app.output
             .request(Action::Preview, &mut app.project, &app.capture, &ctx, false);
         until(&mut app, &ctx, |a| {
             a.output.player.is_some() || a.output.error.is_some()
         });
         assert!(app.output.error.is_none(), "{:?}", app.output.error);
-        assert_eq!(count(), 2);
-        app.output
-            .request(Action::Preview, &mut app.project, &app.capture, &ctx, false);
-        until(&mut app, &ctx, |a| {
-            a.output.player.is_some() && !a.output.busy()
-        });
-        assert_eq!(count(), 2, "Current preview reuses its prepared MP4");
         app.project.edit(Edit::TrimClip {
             clip,
             in_ms: 450,
@@ -688,13 +941,31 @@ mod tests {
             a.output.player.is_some() || a.output.error.is_some()
         });
         assert!(app.output.error.is_none(), "{:?}", app.output.error);
-        assert_eq!(count(), 3, "Changed trim requires a fresh preview");
+        assert_eq!(
+            count(),
+            1,
+            "Changed trims preview directly without a fresh MP4"
+        );
+        assert_eq!(
+            fs::read(folder.join("project.json")).unwrap(),
+            json_before_preview
+        );
+        assert_eq!(
+            head(),
+            head_before_preview,
+            "Preview must not create a local version"
+        );
         app.output
             .request(Action::Export, &mut app.project, &app.capture, &ctx, false);
         app.output.pending.as_ref().unwrap().cancel.cancel();
         until(&mut app, &ctx, |a| !a.output.busy());
         assert!(app.output.error.is_some());
-        assert_eq!(count(), 3);
+        assert_eq!(count(), 1);
+        assert_eq!(
+            fs::read(folder.join("project.json")).unwrap(),
+            json_before_preview
+        );
+        assert_eq!(head(), head_before_preview);
         assert_eq!(fs::read(&path).unwrap(), original);
         app.output.stop_preview();
     }

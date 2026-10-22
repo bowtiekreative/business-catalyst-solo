@@ -2,15 +2,18 @@
 //! Construction never opens hardware, starts inference or makes network calls.
 pub mod ai;
 pub mod capture;
+pub mod encoding;
 pub mod export;
 pub mod insert;
 pub mod media;
 mod model;
 mod overlay;
 pub mod playback;
+pub mod preview;
 pub mod renderer;
 mod storage;
 mod timeline;
+pub mod waveform;
 pub mod youtube;
 
 pub use catalyst_core::Result;

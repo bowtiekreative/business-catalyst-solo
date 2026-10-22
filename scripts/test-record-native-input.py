@@ -241,6 +241,19 @@ def run(record, minimum):
                 assert sum(row.get("presses", 0) for row in rows) >= 5
                 assert sum(row.get("releases", 0) for row in rows) >= 5
                 result.update({"size": "minimum1160x800" if minimum else "default1480x1000", "generated_source_only": True, "live_preview_present": True, "record_pointer_down_received": True, "held_release_outside_saved_clip": True, "tap_started_long_take": True, "second_tap_saved_long_take": True, "normal_button_started_recording": True, "normal_button_stopped_and_saved": True, "normal_button_clicked_responses": 2, "saved_clip_count": 3, "first_clip_ready_ms": held_ms})
+                wait(lambda row: not row.get("project_busy") and not row.get("capture_busy"))
+                project = Path(temporary) / "project"
+                saved_json = (project / "project.json").read_bytes()
+                exports = sorted(path.name for path in (project / "exports").iterdir())
+                before = records(log)[-1]["sample"]
+                tap("preview_control")
+                wait(lambda row: row.get("sequence_preview_open") and not row.get("output_busy") and not row.get("camera_running"), 20)
+                rows = [row for row in records(log) if row["sample"] > before]
+                assert any((row.get("preview_control") or {}).get("clicked") for row in rows), "Preview did not receive the OS click"
+                assert not any(row.get("export_pending") for row in rows), "Preview started a full export"
+                assert sorted(path.name for path in (project / "exports").iterdir()) == exports, "Preview created an export"
+                assert (project / "project.json").read_bytes() == saved_json, "Preview changed saved edits"
+                result.update({"native_preview_clicked": True, "timeline_player_opened": True, "preview_stopped_camera": True, "preview_did_not_export_or_save": True})
             else:
                 move("project_menu")
                 button(True)

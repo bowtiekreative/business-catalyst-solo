@@ -266,10 +266,11 @@ snapshot/motion match; Export always builds a new confined artifact. Cancellatio
 is available until atomic publication. A saved MP4 remains available if local Git
 versioning fails, and that separate error is visible.
 
-Sequence playback opens the actual rendered MP4 in a separate native FFplay
+Sequence playback opens the actual rendered MP4 in a separate native mpv
 window, with fixed typed arguments and only a confined project exports/*.mp4 path.
-It uses Space, arrows, F/double click and Escape for playback, seek, fullscreen and
-close. This is distinct from the live camera stage; it is not an embedded egui
+Its visible controller provides Play/Pause and fullscreen. Space pauses, arrows
+seek, F/double click toggles fullscreen, Escape leaves fullscreen, and Q closes
+the player. This is distinct from the live camera stage; it is not an embedded egui
 sequence decoder. The controller starts/reaps players off painting, rejects stale
 project results and exposes errors instead of leaving a blank stage. The export
 folder opener also runs off-thread, with bounded waiting and visible failures.

@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     MediaId, OverlayContent,
+    encoding::{self, VideoEncoder},
     insert::{self, InsertSource},
     renderer::{ActiveOverlay, OverlayAssets, OverlayRenderer, RenderOptions},
 };
@@ -181,6 +182,19 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
         schedule,
         fingerprints,
     } = preflight(store, snapshot, &plan, cancel)?;
+    // Snapshot the process preference once for this job. Every intermediate and
+    // the final MP4 use the same encoder; a runtime failure remains an error.
+    let encoder = encoding::select(cancel)?;
+    report.emit(
+        ExportPhase::Preparing,
+        0.,
+        0,
+        format!(
+            "Video encoding: {}. Preparing your sequence…",
+            encoder.label()
+        ),
+        true,
+    );
     let mut work = WorkDir::new(store)?;
     let mut video_list = String::from("ffconcat version 1.0\n");
     let mut audio_list = String::from("ffconcat version 1.0\n");
@@ -192,7 +206,7 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
         let audio_name = format!("clip-{index:05}.wav");
         let video = work.file(video_name.clone())?;
         let audio = work.file(audio_name.clone())?;
-        let mut command = normalize_command(input, plan.size, &video, &audio, scene)?;
+        let mut command = normalize_command(input, plan.size, &video, &audio, scene, encoder)?;
         let duration = frame_ms(input.frames);
         process::run(
             &mut command,
@@ -207,7 +221,12 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
                     ExportPhase::PreparingClips,
                     0.45 * done as f32 / plan.duration_ms as f32,
                     done,
-                    format!("Preparing clip {} of {}…", index + 1, inputs.len()),
+                    format!(
+                        "Preparing clip {} of {} · {}",
+                        index + 1,
+                        inputs.len(),
+                        encoder.label()
+                    ),
                     true,
                 );
             },
@@ -310,7 +329,14 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
         }
         Ok(())
     });
-    let mut command = final_command(&video_list, &audio_list, pending.path(), &plan, scene)?;
+    let mut command = final_command(
+        &video_list,
+        &audio_list,
+        pending.path(),
+        &plan,
+        scene,
+        encoder,
+    )?;
     process::run(
         &mut command,
         Some(writer),
@@ -324,7 +350,7 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
                 ExportPhase::Encoding,
                 0.45 + 0.52 * done as f32 / plan.duration_ms as f32,
                 done,
-                "Making the MP4 with your overlays…".into(),
+                format!("Making the MP4 with your overlays · {}", encoder.label()),
                 true,
             );
         },
@@ -334,7 +360,7 @@ pub(super) fn export<F: FnMut(ExportProgress)>(
         ExportPhase::Finalizing,
         0.98,
         plan.duration_ms,
-        "Checking the completed MP4…".into(),
+        format!("Checking the completed MP4 · {}", encoder.label()),
         true,
     );
     verify_output(pending.path(), &plan, cancel)?;
@@ -615,6 +641,7 @@ fn normalize_command(
     video: &Path,
     audio: &Path,
     scene: bool,
+    encoder: VideoEncoder,
 ) -> Result<Command> {
     let mut command = base()?;
     command
@@ -657,16 +684,10 @@ fn normalize_command(
     command
         .arg("-filter_complex")
         .arg(filter)
+        .args(["-map", "[v]", "-an"]);
+    encoder.configure(&mut command, 18, false);
+    command
         .args([
-            "-map",
-            "[v]",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "18",
             "-pix_fmt",
             "yuv420p",
             "-r",
@@ -704,6 +725,7 @@ fn final_command(
     output: &Path,
     plan: &ExportPlan,
     scene: bool,
+    encoder: VideoEncoder,
 ) -> Result<Command> {
     let mut command = base()?;
     command.arg("-y");
@@ -747,14 +769,9 @@ fn final_command(
             "1:a:0",
         ]);
     }
+    encoder.configure(&mut command, 20, false);
     command
         .args([
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "20",
             "-pix_fmt",
             "yuv420p",
             "-r",
@@ -994,6 +1011,155 @@ fn verify_output(path: &Path, plan: &ExportPlan, cancel: &Cancellation) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn arguments(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+    fn option(args: &[String], name: &str, value: &str) -> bool {
+        args.windows(2)
+            .any(|pair| pair[0] == name && pair[1] == value)
+    }
+    fn input(has_audio: bool) -> ClipInput {
+        ClipInput {
+            path: PathBuf::from("/generated/source.mp4"),
+            in_ms: 200,
+            duration_ms: 1000,
+            frames: 30,
+            has_audio,
+            source_size: OutputSize {
+                width: 640,
+                height: 480,
+            },
+        }
+    }
+    fn plan(size: OutputSize) -> ExportPlan {
+        ExportPlan {
+            size,
+            duration_ms: 2000,
+            frames: 60,
+            clip_count: 2,
+            warnings: Vec::new(),
+        }
+    }
+    #[test]
+    fn gpu_normalization_selection_preserves_cut_frame_and_audio_contract() {
+        for shape in [Orientation::Horizontal, Orientation::Vertical] {
+            for scene in [false, true] {
+                for has_audio in [false, true] {
+                    let args = arguments(
+                        &normalize_command(
+                            &input(has_audio),
+                            shape.output_size(),
+                            Path::new("/generated/video.mp4"),
+                            Path::new("/generated/audio.wav"),
+                            scene,
+                            VideoEncoder::Nvidia,
+                        )
+                        .unwrap(),
+                    );
+                    assert!(
+                        option(&args, "-c:v", "h264_nvenc"),
+                        "GPU normalization omitted: expected selected h264_nvenc, command still uses software encoding"
+                    );
+                    assert!(option(&args, "-ss", "0.200"));
+                    assert!(option(&args, "-cq", "18") && !args.iter().any(|arg| arg == "-crf"));
+                    assert!(option(&args, "-t", "1.000"));
+                    assert!(option(&args, "-frames:v", "30"));
+                    assert!(option(&args, "-pix_fmt", "yuv420p") && option(&args, "-r", "30"));
+                    assert!(option(&args, "-c:a", "pcm_s16le") && option(&args, "-rf64", "auto"));
+                    assert!(option(&args, "-ar", "48000") && option(&args, "-ac", "2"));
+                    let filter = &args[args
+                        .iter()
+                        .position(|arg| arg == "-filter_complex")
+                        .unwrap()
+                        + 1];
+                    assert!(filter.contains("fps=30") && filter.contains("atrim=end_sample=48000"));
+                    assert_eq!(filter.contains("[0:a:0]"), has_audio);
+                    assert_eq!(
+                        args.iter().any(|arg| arg == "anullsrc=r=48000:cl=stereo"),
+                        !has_audio
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn gpu_final_selection_preserves_exact_frames_audio_and_straight_overlay_contract() {
+        for shape in [Orientation::Horizontal, Orientation::Vertical] {
+            for scene in [false, true] {
+                let args = arguments(
+                    &final_command(
+                        Path::new("/generated/video.ffconcat"),
+                        Path::new("/generated/audio.ffconcat"),
+                        Path::new("/generated/output.mp4"),
+                        &plan(shape.output_size()),
+                        scene,
+                        VideoEncoder::Nvidia,
+                    )
+                    .unwrap(),
+                );
+                assert!(
+                    option(&args, "-c:v", "h264_nvenc"),
+                    "GPU final encoding omitted: expected selected h264_nvenc, command still uses software encoding"
+                );
+                assert!(option(&args, "-frames:v", "60") && option(&args, "-r", "30"));
+                assert!(option(&args, "-cq", "20") && !args.iter().any(|arg| arg == "-crf"));
+                assert!(option(&args, "-video_track_timescale", "90000"));
+                assert!(option(&args, "-c:a", "aac") && option(&args, "-b:a", "160k"));
+                assert!(option(&args, "-ar", "48000") && option(&args, "-ac", "2"));
+                assert!(option(&args, "-framerate", "30"));
+                assert_eq!(
+                    args.iter().any(|arg| arg.contains("alpha=straight")),
+                    !scene
+                );
+                assert_eq!(option(&args, "-map", "1:v:0"), scene);
+                assert_eq!(option(&args, "-map", "0:a:0"), scene);
+                assert!(
+                    option(&args, "-safe", "1")
+                        && option(&args, "-protocol_whitelist", "file,pipe")
+                );
+            }
+        }
+    }
+    #[test]
+    fn cpu_software_choice_remains_available_for_both_export_stages() {
+        for shape in [Orientation::Horizontal, Orientation::Vertical] {
+            for scene in [false, true] {
+                let normalized = normalize_command(
+                    &input(true),
+                    shape.output_size(),
+                    Path::new("/generated/video.mp4"),
+                    Path::new("/generated/audio.wav"),
+                    scene,
+                    VideoEncoder::Cpu,
+                )
+                .unwrap();
+                let final_video = final_command(
+                    Path::new("/generated/video.ffconcat"),
+                    Path::new("/generated/audio.ffconcat"),
+                    Path::new("/generated/output.mp4"),
+                    &plan(shape.output_size()),
+                    scene,
+                    VideoEncoder::Cpu,
+                )
+                .unwrap();
+                for (command, quality) in [(&normalized, "18"), (&final_video, "20")] {
+                    let args = arguments(command);
+                    assert!(option(&args, "-c:v", "libx264"));
+                    assert!(option(&args, "-preset", "veryfast") && option(&args, "-crf", quality));
+                    assert!(
+                        !args
+                            .iter()
+                            .any(|arg| matches!(arg.as_str(), "h264_nvenc" | "-cq"))
+                    );
+                    assert_eq!(args.iter().filter(|arg| arg.as_str() == "-c:v").count(), 1);
+                    assert!(option(&args, "-bf", "0") && option(&args, "-pix_fmt", "yuv420p"));
+                }
+            }
+        }
+    }
     #[test]
     fn work_cleanup_removes_only_registered_files_and_keeps_unknown_content() {
         let temp = tempfile::tempdir().unwrap();

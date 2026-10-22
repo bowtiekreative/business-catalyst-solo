@@ -1,6 +1,7 @@
 use super::{CaptureSettings, FRAME_RATE, SlotMark};
 use crate::{
     Result,
+    encoding::VideoEncoder,
     media::{ImportedMedia, unique_id},
 };
 use catalyst_core::local::{self, FileMode, PathPolicy, PrivateNamespace, WriteExpected};
@@ -34,6 +35,8 @@ pub(crate) struct Manifest {
     version: u32,
     pub id: String,
     pub settings: CaptureSettings,
+    #[serde(default)]
+    pub encoder: VideoEncoder,
     pub closed_count: u64,
     pub frame_count: u64,
     pub pruned_before: u64,
@@ -48,6 +51,7 @@ impl Manifest {
             version: 1,
             id: format!("capture-{}", unique_id()),
             settings,
+            encoder: VideoEncoder::Cpu,
             closed_count: 0,
             frame_count: 0,
             pruned_before: 0,
@@ -301,6 +305,19 @@ impl CutPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_capture_manifest_defaults_to_cpu_and_keeps_saved_encoder() {
+        let manifest = Manifest::new(CaptureSettings::default());
+        let mut legacy = serde_json::to_value(&manifest).unwrap();
+        legacy.as_object_mut().unwrap().remove("encoder");
+        let decoded: Manifest = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.encoder, VideoEncoder::Cpu);
+        let mut saved = manifest;
+        saved.encoder = VideoEncoder::Nvidia;
+        let decoded: Manifest =
+            serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        assert_eq!(decoded.encoder, VideoEncoder::Nvidia);
+    }
     #[test]
     fn exact_cut_boundaries_never_include_the_next_segment() {
         assert_eq!(

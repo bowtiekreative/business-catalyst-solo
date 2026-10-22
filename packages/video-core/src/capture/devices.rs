@@ -31,15 +31,28 @@ pub fn enumerate_devices() -> Result<DeviceInventory> {
             }
         }
         inventory.cameras.sort_by(|a, b| a.id.cmp(&b.id));
-        if let Ok(output) = run_bounded(
+        let mut microphones = match run_bounded(
             Command::new("pactl").args(["-f", "json", "list", "sources"]),
             Duration::from_secs(3),
             &Cancellation::default(),
             2 * 1024 * 1024,
         ) {
-            inventory.microphones = parse_pulse(&output.stdout)?;
+            Ok(output) => Ok(parse_pulse(&output.stdout)?),
+            Err(error) => Err(error),
+        };
+        if let Ok(microphones) = &mut microphones
+            && !microphones.is_empty()
+            && let Ok(default) = run_bounded(
+                Command::new("pactl").arg("get-default-source"),
+                Duration::from_secs(3),
+                &Cancellation::default(),
+                4096,
+            )
+        {
+            prefer_default_microphone(microphones, &default.stdout);
         }
         inventory.message=if inventory.cameras.is_empty(){"No camera detected. Connect a camera and refresh devices. Camera and microphone stay off until Start camera."}else{"Devices are queried without streaming. Start camera explicitly opens the selected camera and microphone."}.into();
+        apply_microphone_inventory(&mut inventory, microphones);
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -47,6 +60,32 @@ pub fn enumerate_devices() -> Result<DeviceInventory> {
             "Camera capture is available on Linux. Local video import remains available.".into();
     }
     Ok(inventory)
+}
+#[cfg(any(target_os = "linux", test))]
+fn apply_microphone_inventory(
+    inventory: &mut DeviceInventory,
+    microphones: Result<Vec<MicrophoneDevice>>,
+) {
+    match microphones {
+        Ok(microphones) => inventory.microphones = microphones,
+        Err(_) => inventory.message.push_str(
+            " Microphone discovery is unavailable. Check PulseAudio/PipeWire and pulseaudio-utils, then refresh devices. Recording without a microphone is silent.",
+        ),
+    }
+}
+#[cfg(any(target_os = "linux", test))]
+fn prefer_default_microphone(microphones: &mut [MicrophoneDevice], source: &[u8]) {
+    let Ok(source) = std::str::from_utf8(source) else {
+        return;
+    };
+    let source = source.trim();
+    if valid_microphone(source)
+        && let Some(index) = microphones
+            .iter()
+            .position(|microphone| microphone.id == source)
+    {
+        microphones[..=index].rotate_right(1);
+    }
 }
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn valid_camera(id: &str) -> bool {
@@ -385,6 +424,55 @@ mod linux {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preferred_source_only_reorders_detected_non_monitor_microphones() {
+        let mut microphones = parse_pulse(
+            br#"[{"name":"first"},{"name":"second"},{"name":"preferred"},{"name":"speaker.monitor"}]"#,
+        )
+        .unwrap();
+        prefer_default_microphone(&mut microphones, b"preferred\n");
+        let ids = |microphones: &[MicrophoneDevice]| {
+            microphones
+                .iter()
+                .map(|microphone| microphone.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&microphones), ["preferred", "first", "second"]);
+        for unavailable in [
+            b"speaker.monitor".as_slice(),
+            b"missing",
+            b"first\nsecond",
+            b"",
+            &[0xff],
+        ] {
+            prefer_default_microphone(&mut microphones, unavailable);
+            assert_eq!(ids(&microphones), ["preferred", "first", "second"]);
+        }
+    }
+    #[test]
+    fn microphone_discovery_failure_is_visible_and_keeps_camera_inventory() {
+        let mut inventory = DeviceInventory {
+            cameras: vec![super::super::CameraDevice {
+                id: "/dev/video2".into(),
+                label: "Generated inventory camera; never opened".into(),
+                modes: Vec::new(),
+            }],
+            microphones: Vec::new(),
+            message: "Devices queried without streaming.".into(),
+        };
+        apply_microphone_inventory(&mut inventory, Err("Media tool could not start".into()));
+        assert!(
+            inventory
+                .message
+                .contains("Microphone discovery is unavailable"),
+            "A missing or failed pactl must not silently hide every microphone"
+        );
+        assert!(inventory.message.contains("pulseaudio-utils"));
+        assert!(inventory.message.contains("silent"));
+        assert!(inventory.microphones.is_empty());
+        assert_eq!(inventory.cameras.len(), 1);
+        assert_eq!(inventory.cameras[0].id, "/dev/video2");
+    }
     #[test]
     fn only_local_video_nodes_and_pulse_sources_are_accepted() {
         for bad in [

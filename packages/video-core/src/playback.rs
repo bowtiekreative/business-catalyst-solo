@@ -8,10 +8,14 @@ use std::{
 #[cfg(all(test, unix, feature = "capture-test"))]
 #[path = "playback/native_tests.rs"]
 mod native_tests;
+#[cfg(target_os = "linux")]
+mod timeline;
 
 pub struct SequencePlayer {
     child: Child,
     _controls: tempfile::NamedTempFile,
+    #[cfg(target_os = "linux")]
+    timeline: Option<timeline::Runtime>,
 }
 impl SequencePlayer {
     /// Call from a worker. The only accepted input is an existing confined MP4
@@ -32,14 +36,57 @@ impl SequencePlayer {
         Ok(Self {
             child,
             _controls: controls,
+            #[cfg(target_os = "linux")]
+            timeline: None,
         })
+    }
+    /// Play an immutable timeline directly from its confined source trims.
+    /// Opens on a worker; never exports, saves the draft or creates a version.
+    pub fn start_timeline(
+        store: &ProjectStore,
+        snapshot: &crate::Studio,
+        muted: bool,
+        reduced_motion: bool,
+    ) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            timeline::start(store, snapshot, muted, reduced_motion)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (store, snapshot, muted, reduced_motion);
+            Err("Direct timeline playback is currently available on Linux".into())
+        }
     }
     /// Nonblocking status; Some(false) is surfaced as a playback failure.
     pub fn finished(&mut self) -> Result<Option<bool>> {
-        Ok(self.child.try_wait()?.map(|status| status.success()))
+        if let Some(status) = self.child.try_wait()? {
+            return Ok(Some(status.success()));
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(runtime) = &mut self.timeline
+            && let Err(error) = runtime.check()
+        {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            return Err(error);
+        }
+        Ok(None)
     }
 }
 fn player_command(store: &ProjectStore, muted: bool) -> Result<(Command, tempfile::NamedTempFile)> {
+    let (mut command, controls) = player_base_command(store, muted)?;
+    command.args([
+        "--demuxer=lavf",
+        "--demuxer-lavf-format=mov",
+        "--demuxer-lavf-o=protocol_whitelist=file",
+    ]);
+    Ok((command, controls))
+}
+fn player_base_command(
+    store: &ProjectStore,
+    muted: bool,
+) -> Result<(Command, tempfile::NamedTempFile)> {
     let mut command = Command::new(media::tool("mpv").map_err(
         |_| "Install system mpv to preview sequences with Play/Pause and fullscreen controls",
     )?);
@@ -49,7 +96,6 @@ fn player_command(store: &ProjectStore, muted: bool) -> Result<(Command, tempfil
         "--save-position-on-quit=no", "--keep-open=yes", "--keep-open-pause=no", "--force-window=yes",
         "--title=Storyfold · Sequence preview", "--autofit=960x640",
         "--osc=yes", "--script-opts=osc-visibility=always,osc-layout=bottombar,osc-fadeduration=0,osc-boxvideo=yes",
-        "--demuxer=lavf", "--demuxer-lavf-format=mov", "--demuxer-lavf-o=protocol_whitelist=file",
     ]);
     // This compiled-in replay handler is the only script loaded. User configs,
     // arbitrary scripts, extractors and sidecar files remain disabled.
@@ -70,12 +116,16 @@ fn player_command(store: &ProjectStore, muted: bool) -> Result<(Command, tempfil
 }
 impl Drop for SequencePlayer {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(runtime) = &self.timeline {
+            runtime.cancel();
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 fn export_path(store: &ProjectStore, relative: &str) -> Result<std::path::PathBuf> {
-    if !relative.starts_with("exports/") || !relative.ends_with(".mp4") {
+    if !relative.starts_with("exports/") || !relative.to_ascii_lowercase().ends_with(".mp4") {
         return Err("Choose a prepared MP4 sequence from this project's exports".into());
     }
     local::confined_file(
@@ -124,6 +174,30 @@ pub fn open_export_folder(store: &ProjectStore) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Requires installed system mpv; checks command only, never starts playback"]
+    fn sequence_audio_is_enabled_unless_explicitly_muted() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _) =
+            ProjectStore::create(temp.path().join("project"), "Playback audio options").unwrap();
+        for muted in [false, true] {
+            let (command, _controls) = player_command(&store, muted).unwrap();
+            let args: Vec<_> = command.get_args().filter_map(|arg| arg.to_str()).collect();
+            assert_eq!(args.contains(&"--audio=no"), muted);
+            assert!(!args.contains(&"--mute=yes"));
+            assert!(!args.contains(&"--volume=0"));
+            assert!(args.contains(&"--no-config"));
+        }
+    }
+    #[test]
+    fn preview_accepts_uppercase_extension_for_a_confined_export() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _) =
+            ProjectStore::create(temp.path().join("project"), "Playback extension").unwrap();
+        let path = store.root().join("exports/generated.MP4");
+        std::fs::write(&path, b"Path validation only; no player is started").unwrap();
+        assert_eq!(export_path(&store, "exports/generated.MP4").unwrap(), path);
+    }
     #[test]
     fn preview_rejects_outside_paths_urls_missing_files_and_links_before_spawning() {
         let temp = tempfile::tempdir().unwrap();

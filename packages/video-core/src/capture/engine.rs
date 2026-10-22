@@ -3,6 +3,7 @@ use super::{
     gesture::{Action, Gesture, GestureState, Stamp},
     *,
 };
+use crate::encoding::VideoEncoder;
 use crate::media::{self, Cancellation, ImportedMedia, run_bounded};
 use catalyst_core::local::{self, FileMode, PathPolicy, PendingFile, PrivateNamespace};
 use ffmpeg_sidecar::{child::FfmpegChild, command::FfmpegCommand};
@@ -12,7 +13,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender, TryRecvError},
     },
@@ -23,6 +24,7 @@ use std::{
 struct Shared {
     status: Mutex<CaptureStatus>,
     preview: Mutex<Option<(Arc<PreviewFrame>, Instant)>>,
+    preview_waker: OnceLock<Arc<dyn Fn() + Send + Sync>>,
     events: Mutex<VecDeque<CaptureEvent>>,
     frame_count: AtomicU64,
     stop: AtomicBool,
@@ -101,9 +103,10 @@ impl CaptureSession {
                 pending_takes: 0,
                 completed_takes: 0,
                 camera_running: false,
-                message: "Starting the selected camera and microphone…".into(),
+                message: "Checking the video encoder before starting camera and microphone…".into(),
             }),
             preview: Mutex::new(None),
+            preview_waker: OnceLock::new(),
             events: Mutex::new(VecDeque::new()),
             frame_count: AtomicU64::new(0),
             stop: AtomicBool::new(false),
@@ -163,6 +166,11 @@ impl CaptureSession {
             .unwrap_or_else(|error| error.into_inner())
             .as_ref()
             .map(|(frame, _)| frame.clone())
+    }
+    /// Register one nonblocking frame-ready callback. It runs on the preview
+    /// reader after publication, outside the latest-frame lock.
+    pub fn set_preview_waker(&self, wake: impl Fn() + Send + Sync + 'static) -> bool {
+        self.shared.preview_waker.set(Arc::new(wake)).is_ok()
     }
     pub fn poll_events(&self) -> Vec<CaptureEvent> {
         self.shared
@@ -314,6 +322,18 @@ fn preview_dimensions(mode: CameraMode) -> (u32, u32) {
     }
     ((width as u32) & !1, (height as u32) & !1)
 }
+fn publish_preview(shared: &Shared, frame: Arc<PreviewFrame>) {
+    shared
+        .frame_count
+        .store(frame.sequence.saturating_add(1), Ordering::Release);
+    *shared
+        .preview
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some((frame, Instant::now()));
+    if let Some(wake) = shared.preview_waker.get() {
+        wake();
+    }
+}
 fn spawn_camera(
     root: &Path,
     manifest: &Manifest,
@@ -393,21 +413,9 @@ fn spawn_camera(
     let encode_threads = thread::available_parallelism()
         .map_or(2, |count| count.get().min(4))
         .to_string();
+    command.args(["-map", "[vrec]", "-map", "[a]"]);
+    configure_capture_video(&mut command, manifest.encoder, &encode_threads);
     command.args([
-        "-map",
-        "[vrec]",
-        "-map",
-        "[a]",
-        "-c:v",
-        "libx264",
-        "-threads",
-        &encode_threads,
-        "-preset",
-        "veryfast",
-        "-tune",
-        "zerolatency",
-        "-crf",
-        "20",
         "-pix_fmt",
         "yuv420p",
         "-profile:v",
@@ -481,13 +489,7 @@ fn spawn_camera(
                 height: preview_height,
                 rgba,
             });
-            frames_shared
-                .frame_count
-                .store(sequence.saturating_add(1), Ordering::Release);
-            *frames_shared
-                .preview
-                .lock()
-                .unwrap_or_else(|error| error.into_inner()) = Some((frame, Instant::now()));
+            publish_preview(&frames_shared, frame);
             sequence = match sequence.checked_add(1) {
                 Some(next) => next,
                 None => break,
@@ -513,6 +515,24 @@ fn spawn_camera(
     })
 }
 
+fn stop_before_devices(root: &Path, manifest: &mut Manifest, shared: &Shared) -> Result<bool> {
+    if !shared.stop.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+    manifest.stopped = true;
+    manifest.save(root)?;
+    let mut status = shared
+        .status
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    status.phase = CapturePhase::Stopped;
+    status.camera_running = false;
+    status.message = "Camera is off. No capture devices were started.".into();
+    drop(status);
+    emit(shared, CaptureEvent::Stopped);
+    Ok(true)
+}
+
 fn run_capture(
     root: &Path,
     mut manifest: Manifest,
@@ -521,6 +541,18 @@ fn run_capture(
     commands: mpsc::Receiver<Control>,
     cancel: &Cancellation,
 ) -> Result<()> {
+    cancel.check()?;
+    if stop_before_devices(root, &mut manifest, shared)? {
+        return Ok(());
+    }
+    // One backend per buffered session. Select and persist it before opening
+    // capture devices; later cuts and explicit recovery reuse this choice.
+    manifest.encoder = crate::encoding::select(cancel)?;
+    manifest.save(root)?;
+    cancel.check()?;
+    if stop_before_devices(root, &mut manifest, shared)? {
+        return Ok(());
+    }
     // Declaration order matters on errors: drop/reap the camera before joining
     // the cutter, so slow postprocessing cannot leave hardware open invisibly.
     let mut cutter = CutWorker {
@@ -539,6 +571,7 @@ fn run_capture(
     let cut_root = root.to_owned();
     let cut_directory = manifest.relative();
     let cut_cancel = cancel.clone();
+    let cut_encoder = manifest.encoder;
     let cutter_thread = thread::spawn(move || {
         while !cut_cancel.is_cancelled() {
             let take = match job_receiver.recv_timeout(Duration::from_millis(50)) {
@@ -546,7 +579,7 @@ fn run_capture(
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             };
-            let result=cut_take(&cut_root,&cut_directory,&take,&cut_cancel).map_err(|_|"Take preparation failed or was cancelled; source segments remain available through recovery.".into());
+            let result=cut_take(&cut_root,&cut_directory,&take,cut_encoder,&cut_cancel).map_err(|_|"Take preparation failed or was cancelled; source segments remain available through recovery.".into());
             if results.try_send((take.ordinal, result)).is_err() {
                 break;
             }
@@ -788,12 +821,23 @@ fn run_capture(
             } else {
                 CapturePhase::Stopped
             };
-            status.message=match status.phase{
-                CapturePhase::Starting=>"Waiting for the camera preview…",CapturePhase::Ready=>"Camera is on. Hold Record for a clip, or tap for a long take.",
-                CapturePhase::Holding=>"Recording a clip. Release to finish.",CapturePhase::LongTake=>"Recording a long take. Press Record again or Stop take to finish.",
-                CapturePhase::Stopping=>"Stopping camera and preserving the recording buffer…",CapturePhase::Finishing=>"Camera is off. Preparing completed takes…",
-                CapturePhase::Stopped=>"Camera is off. Completed takes are available.",CapturePhase::Failed=>"Capture stopped with an error. Saved takes and remaining segments are available in recovery.",
-            }.into();
+            let message = match status.phase {
+                CapturePhase::Starting => "Waiting for the camera preview…",
+                CapturePhase::Ready => {
+                    "Camera is on. Hold Record for a clip, or tap for a long take."
+                }
+                CapturePhase::Holding => "Recording a clip. Release to finish.",
+                CapturePhase::LongTake => {
+                    "Recording a long take. Press Record again or Stop take to finish."
+                }
+                CapturePhase::Stopping => "Stopping camera and preserving the recording buffer…",
+                CapturePhase::Finishing => "Camera is off. Preparing completed takes…",
+                CapturePhase::Stopped => "Camera is off. Completed takes are available.",
+                CapturePhase::Failed => {
+                    "Capture stopped with an error. Saved takes and remaining segments are available in recovery."
+                }
+            };
+            status.message = format!("{} · {message}", manifest.encoder.label());
         }
         if !camera_running && pending == 0 && in_flight.is_empty() {
             manifest.save(root)?;
@@ -898,12 +942,16 @@ fn ffmpeg() -> Result<FfmpegCommand> {
     ]);
     Ok(command)
 }
+fn configure_capture_video(command: &mut FfmpegCommand, encoder: VideoEncoder, threads: &str) {
+    encoder.configure(command.as_inner_mut(), 20, true);
+    command.args(["-threads", threads]);
+}
 fn encode_edge(
     root: &Path,
     directory: &str,
     source: &Path,
-    start: u64,
-    end: u64,
+    range: std::ops::Range<u64>,
+    encoder: VideoEncoder,
     cancel: &Cancellation,
 ) -> Result<PendingFile> {
     let output = temporary(root, directory, "ts")?;
@@ -913,19 +961,12 @@ fn encode_edge(
         .arg(source)
         .args(["-map", "0:v:0", "-an", "-vf"])
         .arg(format!(
-            "trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS"
-        ))
+            "trim=start_frame={}:end_frame={},setpts=PTS-STARTPTS",
+            range.start, range.end
+        ));
+    configure_capture_video(&mut command, encoder, "2");
+    command
         .args([
-            "-c:v",
-            "libx264",
-            "-threads",
-            "2",
-            "-preset",
-            "veryfast",
-            "-tune",
-            "zerolatency",
-            "-crf",
-            "20",
             "-pix_fmt",
             "yuv420p",
             "-profile:v",
@@ -949,6 +990,7 @@ fn cut_take(
     root: &Path,
     directory: &str,
     take: &TakeRange,
+    encoder: VideoEncoder,
     cancel: &Cancellation,
 ) -> Result<ImportedMedia> {
     cancel.check()?;
@@ -976,8 +1018,8 @@ fn cut_take(
         root,
         directory,
         &originals[0],
-        plan.first_offset,
-        first_end,
+        plan.first_offset..first_end,
+        encoder,
         cancel,
     )?);
     if originals.len() > 2 {
@@ -1005,8 +1047,8 @@ fn cut_take(
             root,
             directory,
             originals.last().ok_or("Missing final segment")?,
-            0,
-            plan.last_end,
+            0..plan.last_end,
+            encoder,
             cancel,
         )?);
     }
@@ -1206,6 +1248,7 @@ pub fn recover_session(
             store.root(),
             &manifest.relative(),
             &manifest.takes[index],
+            manifest.encoder,
             cancel,
         )?;
         manifest.takes[index].media = Some(media);
@@ -1256,6 +1299,216 @@ fn count_frames(source: &Path, cancel: &Cancellation) -> Result<u64> {
 #[cfg(all(test, target_os = "linux", feature = "capture-test"))]
 mod tests {
     use super::*;
+    #[test]
+    fn stop_during_preflight_keeps_capture_devices_off() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _) =
+            ProjectStore::create(temp.path().join("project"), "Stopped preflight").unwrap();
+        let mut manifest = Manifest::new(CaptureSettings::default());
+        let _guard = manifest.create(store.root()).unwrap();
+        manifest.encoder = VideoEncoder::Nvidia;
+        let shared = Shared {
+            status: Mutex::new(CaptureStatus {
+                session_id: manifest.id.clone(),
+                phase: CapturePhase::Starting,
+                media_ms: 0,
+                active_ms: 0,
+                pending_takes: 0,
+                completed_takes: 0,
+                camera_running: false,
+                message: String::new(),
+            }),
+            preview: Mutex::new(None),
+            preview_waker: OnceLock::new(),
+            events: Mutex::new(VecDeque::new()),
+            frame_count: AtomicU64::new(0),
+            stop: AtomicBool::new(true),
+            event_overflow: AtomicBool::new(false),
+        };
+        assert!(stop_before_devices(store.root(), &mut manifest, &shared).unwrap());
+        let status = shared.status.lock().unwrap();
+        assert_eq!(status.phase, CapturePhase::Stopped);
+        assert!(status.can_leave());
+        assert!(!status.camera_running);
+        assert!(shared.preview.lock().unwrap().is_none());
+        let saved = Manifest::load(store.root(), &manifest.id).unwrap();
+        assert!(saved.stopped);
+        assert_eq!(saved.encoder, VideoEncoder::Nvidia);
+        assert!(matches!(
+            shared.events.lock().unwrap().front(),
+            Some(CaptureEvent::Stopped)
+        ));
+    }
+    #[test]
+    fn capture_encoder_configuration_honors_manifest_backend() {
+        let mut command = FfmpegCommand::new_with_path("not-executed");
+        configure_capture_video(&mut command, VideoEncoder::Nvidia, "2");
+        let args: Vec<_> = command
+            .as_inner_mut()
+            .get_args()
+            .filter_map(|arg| arg.to_str())
+            .collect();
+        assert!(
+            args.windows(2).any(|pair| pair == ["-c:v", "h264_nvenc"]),
+            "Capture must use the backend saved for this session"
+        );
+        assert!(!args.contains(&"libx264"));
+        assert!(!args.contains(&"-crf"));
+        assert!(args.windows(2).any(|pair| pair == ["-tune", "ull"]));
+    }
+    #[test]
+    fn preview_publication_wakes_once_after_unlock_and_keeps_media_clock() {
+        let (commands, _receiver) = mpsc::sync_channel(1);
+        let session = CaptureSession {
+            shared: Arc::new(Shared {
+                status: Mutex::new(CaptureStatus {
+                    session_id: "generated-waker".into(),
+                    phase: CapturePhase::Starting,
+                    media_ms: 0,
+                    active_ms: 0,
+                    pending_takes: 0,
+                    completed_takes: 0,
+                    camera_running: false,
+                    message: String::new(),
+                }),
+                preview: Mutex::new(None),
+                preview_waker: OnceLock::new(),
+                events: Mutex::new(VecDeque::new()),
+                frame_count: AtomicU64::new(0),
+                stop: AtomicBool::new(false),
+                event_overflow: AtomicBool::new(false),
+            }),
+            commands,
+            epoch: Instant::now(),
+            cancel: Cancellation::default(),
+            worker: None,
+        };
+        let weak = Arc::downgrade(&session.shared);
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let frames = observed.clone();
+        assert!(session.set_preview_waker(move || {
+            let shared = weak.upgrade().unwrap();
+            let latest = shared
+                .preview
+                .try_lock()
+                .expect("Frame-ready callback must run outside the preview lock");
+            let frame = &latest.as_ref().unwrap().0;
+            assert_eq!(frame.media_ms, frame_ms(frame.sequence));
+            assert_eq!(
+                shared.frame_count.load(Ordering::Acquire),
+                frame.sequence + 1
+            );
+            frames.lock().unwrap().push(frame.sequence);
+        }));
+        assert!(
+            !session.set_preview_waker(|| panic!("A second callback must not replace the first"))
+        );
+        for sequence in 0..3 {
+            publish_preview(
+                &session.shared,
+                Arc::new(PreviewFrame {
+                    sequence,
+                    media_ms: frame_ms(sequence),
+                    width: 2,
+                    height: 2,
+                    rgba: vec![0; 16],
+                }),
+            );
+            assert_eq!(
+                observed.lock().unwrap().len(),
+                sequence as usize + 1,
+                "Publishing a preview must wake its listener immediately"
+            );
+        }
+        assert_eq!(*observed.lock().unwrap(), vec![0, 1, 2]);
+    }
+    #[test]
+    #[ignore = "Generated HD frame-ready versus16ms polling; STORYFOLD_CAPTURE_TEST=1, no devices"]
+    fn generated_preview_waker_delivery_and_timer_phase() {
+        assert_eq!(std::env::var("STORYFOLD_CAPTURE_TEST").as_deref(), Ok("1"));
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _) =
+            ProjectStore::create(temp.path().join("project"), "Generated wake").unwrap();
+        let session =
+            Arc::new(CaptureSession::start_generated(&store, CaptureSettings::default()).unwrap());
+        let weak = Arc::downgrade(&session);
+        let (sender, receiver) = mpsc::sync_channel(512);
+        assert!(session.set_preview_waker(move || {
+            let Some(session) = weak.upgrade() else {
+                return;
+            };
+            let latest = session.shared.preview.lock().unwrap();
+            let (frame, published) = latest.as_ref().unwrap();
+            assert_eq!(frame.media_ms, frame_ms(frame.sequence));
+            let sample = (frame.sequence, *published, Instant::now());
+            drop(latest);
+            sender
+                .try_send(sample)
+                .expect("Generated wake sample bound");
+        }));
+        wait(&session, Duration::from_secs(15), |s| {
+            s.phase == CapturePhase::Ready
+        });
+        let started = Instant::now();
+        let mut polled = Vec::new();
+        let mut last = None;
+        while started.elapsed() < Duration::from_secs(6) {
+            if let Some(frame) = session.latest_preview()
+                && last != Some(frame.sequence)
+            {
+                polled.push((frame.sequence, Instant::now()));
+                last = Some(frame.sequence);
+            }
+            thread::sleep(Duration::from_millis(16));
+        }
+        session.stop().unwrap();
+        wait(&session, Duration::from_secs(10), |s| s.can_leave());
+        let wakes: Vec<_> = receiver.try_iter().collect();
+        let mut direct = Vec::new();
+        let mut timer = Vec::new();
+        let mut matched = Vec::new();
+        for (sequence, published, notified) in wakes {
+            if let Some((_, observed)) = polled.iter().find(|(seq, _)| *seq == sequence) {
+                direct.push(notified.duration_since(published).as_secs_f64() * 1000.);
+                timer.push(observed.duration_since(published).as_secs_f64() * 1000.);
+                matched.push((sequence, published));
+            }
+        }
+        assert!(matched.len() >= 90, "Insufficient matched generated frames");
+        let fps = (matched.last().unwrap().0 - matched[0].0) as f64
+            / matched
+                .last()
+                .unwrap()
+                .1
+                .duration_since(matched[0].1)
+                .as_secs_f64();
+        direct.sort_by(f64::total_cmp);
+        timer.sort_by(f64::total_cmp);
+        let median = direct[direct.len() / 2];
+        let p95 = direct[direct.len() * 95 / 100];
+        let timer_median = timer[timer.len() / 2];
+        let timer_p95 = timer[timer.len() * 95 / 100];
+        let proof = serde_json::json!({
+            "generated_only":true,"physical_devices_opened":false,
+            "component":"Published normalized frame to callback versus16ms latest-frame polling; excludes source/camera and actual UI/GPU",
+            "matched_frames":matched.len(),"fps_before_stop":fps,
+            "callback_ms":{"median":median,"p95":p95},
+            "timer_poll_ms":{"median":timer_median,"p95":timer_p95},
+        });
+        if let Some(path) = std::env::var_os("STORYFOLD_CAPTURE_WAKE_PROOF") {
+            fs::write(path, serde_json::to_vec_pretty(&proof).unwrap()).unwrap();
+        }
+        println!("{proof}");
+        assert!(fps >= 24., "Generated capture is not keeping up");
+        assert!(
+            p95 < 16.,
+            "Frame-ready callback missed the polling interval"
+        );
+        assert!(
+            median < timer_median,
+            "Frame-ready delivery did not beat polling"
+        );
+    }
     #[test]
     fn preview_bounds_preserve_camera_aspect_without_upscaling() {
         for (width, height, expected) in [
@@ -1366,6 +1619,233 @@ mod tests {
         CaptureSettings {
             microphone_id: Some("generated-tone".into()),
             ..Default::default()
+        }
+    }
+    #[test]
+    #[ignore = "Explicit generated1080p NVIDIA capture/edge/recovery; requires STORYFOLD_CAPTURE_TEST=1 and working NVENC"]
+    fn generated_gpu_capture_cut_and_recovery_use_saved_encoder() {
+        assert_eq!(std::env::var("STORYFOLD_CAPTURE_TEST").as_deref(), Ok("1"));
+        let temp = tempfile::Builder::new()
+            .prefix("storyfold-gpu-capture-")
+            .tempdir()
+            .unwrap();
+        let (store, _) =
+            ProjectStore::create(temp.path().join("project"), "Generated GPU recovery").unwrap();
+        let session = CaptureSession::start_generated(&store, generated_settings()).unwrap();
+        wait(&session, Duration::from_secs(20), |status| {
+            status.phase == CapturePhase::Ready
+        });
+        assert!(
+            session
+                .status()
+                .message
+                .contains(VideoEncoder::Nvidia.label()),
+            "This opt-in test requires actual GPU selection, not CPU fallback"
+        );
+        let id = session.status().session_id.clone();
+        assert_eq!(
+            Manifest::load(store.root(), &id).unwrap().encoder,
+            VideoEncoder::Nvidia
+        );
+        session.press().unwrap();
+        wait(&session, Duration::from_secs(10), |status| {
+            status.active_ms >= 3200
+        });
+        session.send(Control::InterruptGenerated).unwrap();
+        wait(&session, Duration::from_secs(20), CaptureStatus::can_leave);
+        assert_eq!(session.status().phase, CapturePhase::Failed);
+        drop(session);
+        let manifest = Manifest::load(store.root(), &id).unwrap();
+        assert_eq!(manifest.encoder, VideoEncoder::Nvidia);
+        let originals: Vec<_> = fs::read_dir(store.root().join(manifest.relative()))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "ts"))
+            .map(|path| {
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        assert!(
+            originals.len() >= 3,
+            "Exercise copied interior segments and encoded edges"
+        );
+        let recovered = recover_session(&store, &id, &Cancellation::default()).unwrap();
+        assert_eq!(recovered.len(), 1);
+        let saved = Manifest::load(store.root(), &id).unwrap();
+        assert_eq!(saved.encoder, VideoEncoder::Nvidia);
+        let range = &saved.takes[0];
+        let path = store.root().join(recovered[0].media().path());
+        assert_eq!(
+            count_frames(&path, &Cancellation::default()).unwrap(),
+            range.end - range.start
+        );
+        assert!(
+            audio_rms(&path, "0.2") > 0.02,
+            "Generated microphone tone survives GPU recovery"
+        );
+        let plan = CutPlan::new(range.start, range.end).unwrap();
+        assert!(plan.last > plan.first + 1);
+        let interior = plan.first + 1;
+        let source = store
+            .root()
+            .join(saved.relative())
+            .join(segment_name(interior));
+        assert_eq!(
+            frame_bytes(&source, 0),
+            frame_bytes(&path, interior * FRAME_RATE - range.start)
+        );
+        for (source, bytes) in originals {
+            assert_eq!(
+                fs::read(source).unwrap(),
+                bytes,
+                "Recovery preserves original GPU segments"
+            );
+        }
+        println!(
+            "Generated-only NVIDIA1080p capture/recovery: saved backend, exact frames, edge encodes/interior copies, real tone PCM and unchanged source segments; no camera/microphone opened"
+        );
+    }
+    fn audio_rms(path: &Path, start: &str) -> f64 {
+        let mut command = ffmpeg().unwrap();
+        command
+            .args(["-protocol_whitelist", "file,pipe", "-ss", start, "-i"])
+            .arg(path)
+            .args([
+                "-t", "0.2", "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "48000", "-f", "f32le",
+                "pipe:1",
+            ]);
+        let output = run_bounded(
+            command.as_inner_mut(),
+            Duration::from_secs(15),
+            &Cancellation::default(),
+            128 * 1024,
+        )
+        .unwrap()
+        .stdout;
+        let samples = output.as_chunks::<4>().0;
+        assert!(
+            samples.len() > 9000,
+            "Decode actual PCM, not stream metadata"
+        );
+        let energy = samples
+            .iter()
+            .map(|sample| f64::from(f32::from_le_bytes(*sample)).powi(2))
+            .sum::<f64>();
+        (energy / samples.len() as f64).sqrt()
+    }
+    #[test]
+    #[ignore = "Generated microphone tone/off through take cuts and trimmed export; STORYFOLD_CAPTURE_TEST=1"]
+    fn generated_microphone_signal_survives_take_trim_join_and_export() {
+        assert_eq!(std::env::var("STORYFOLD_CAPTURE_TEST").as_deref(), Ok("1"));
+        let temp = tempfile::Builder::new()
+            .prefix("storyfold-capture-audio-")
+            .tempdir()
+            .unwrap();
+        for microphone_on in [false, true] {
+            let (mut store, studio) = ProjectStore::create(
+                temp.path().join(if microphone_on { "tone" } else { "off" }),
+                "Generated microphone signal",
+            )
+            .unwrap();
+            let settings = CaptureSettings {
+                microphone_id: microphone_on.then(|| "generated-tone".into()),
+                mode: CameraMode {
+                    width: 640,
+                    height: 360,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let session = CaptureSession::start_generated(&store, settings).unwrap();
+            wait(&session, Duration::from_secs(15), |status| {
+                status.phase == CapturePhase::Ready
+            });
+            session.press().unwrap();
+            wait(&session, Duration::from_secs(10), |status| {
+                status.phase == CapturePhase::Holding && status.active_ms >= 1333
+            });
+            session.release().unwrap();
+            wait(&session, Duration::from_secs(2), |status| {
+                status.phase == CapturePhase::Ready
+            });
+            session.stop().unwrap();
+            wait(&session, Duration::from_secs(30), CaptureStatus::can_leave);
+            let takes: Vec<_> = session
+                .poll_events()
+                .into_iter()
+                .filter_map(|event| match event {
+                    CaptureEvent::TakeCompleted(take) => Some(take),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(takes.len(), 1, "{:?}", session.status());
+            let take = &takes[0];
+            let path = store.root().join(take.media().path());
+            let original = fs::read(&path).unwrap();
+            let take_rms = audio_rms(&path, "0.2");
+            let mut editor = Editor::new(studio).unwrap();
+            let first = take.append_to(&store, &mut editor).unwrap();
+            editor
+                .apply(Edit::TrimClip {
+                    clip: first,
+                    in_ms: 100,
+                    out_ms: 500,
+                })
+                .unwrap();
+            editor
+                .apply(Edit::AddClip {
+                    source: editor.studio().media()[0].id(),
+                    name: "Later trimmed audio".into(),
+                    in_ms: 700,
+                    out_ms: 1100,
+                })
+                .unwrap();
+            let outcome = crate::export::export_sequence(
+                &mut store,
+                editor.studio(),
+                crate::export::ExportOptions::default(),
+                &Cancellation::default(),
+                |_| {},
+            )
+            .unwrap();
+            assert_eq!(outcome.artifact.frames, 24);
+            let export = outcome.artifact.path(&store).unwrap();
+            let exported_rms = [audio_rms(&export, "0.1"), audio_rms(&export, "0.5")];
+            for (stage, rms) in [
+                ("prepared take", take_rms),
+                ("first trimmed clip", exported_rms[0]),
+                ("second joined clip", exported_rms[1]),
+            ] {
+                if microphone_on {
+                    assert!(
+                        rms > 0.02,
+                        "Generated microphone signal lost at {stage}: {rms}"
+                    );
+                } else {
+                    assert!(
+                        rms < 0.001,
+                        "Microphone Off must stay silent at {stage}: {rms}"
+                    );
+                }
+            }
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                original,
+                "Export must preserve the take"
+            );
+            println!(
+                "{}",
+                serde_json::json!({
+                    "generated_only": true,
+                    "physical_devices_opened": false,
+                    "microphone_on": microphone_on,
+                    "take_rms": take_rms,
+                    "trimmed_export_rms": exported_rms,
+                    "frames": outcome.artifact.frames,
+                    "original_take_unchanged": true,
+                })
+            );
         }
     }
     #[test]

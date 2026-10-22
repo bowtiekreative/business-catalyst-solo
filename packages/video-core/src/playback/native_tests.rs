@@ -14,7 +14,18 @@ struct Ipc {
 }
 impl Ipc {
     fn get(&mut self, name: &str) -> Value {
-        assert!(["pause", "time-pos", "fullscreen", "eof-reached"].contains(&name));
+        assert!(
+            [
+                "pause",
+                "time-pos",
+                "fullscreen",
+                "eof-reached",
+                "audio-params",
+                "mute",
+                "volume"
+            ]
+            .contains(&name)
+        );
         self.sequence += 1;
         writeln!(
             self.writer,
@@ -57,11 +68,11 @@ impl Ipc {
     }
 }
 
-struct NativeInput {
-    player_pid: u32,
+pub(super) struct NativeInput {
+    pub(super) player_pid: u32,
 }
 impl NativeInput {
-    fn action(&self, action: &str) {
+    pub(super) fn action(&self, action: &str) {
         assert!(["play-pause", "fullscreen", "escape"].contains(&action));
         let helper = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../scripts/test-native-player-input.py");
@@ -103,7 +114,7 @@ fn generated_native_player_mouse_play_pause_fullscreen_and_replay() {
         .tempdir()
         .unwrap();
     let (store, _) = ProjectStore::create(temp.path().join("project"), "Generated player").unwrap();
-    let path = store.root().join("exports/generated.mp4");
+    let path = store.root().join("exports/generated.MP4");
     assert!(
         Command::new(media::tool("ffmpeg").unwrap())
             .args([
@@ -114,9 +125,18 @@ fn generated_native_player_mouse_play_pause_fullscreen_and_replay() {
                 "lavfi",
                 "-i",
                 "testsrc2=size=640x360:rate=30",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000",
                 "-t",
                 "5",
-                "-an",
+                "-c:a",
+                "aac",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
                 "-c:v",
                 "libx264",
                 "-threads",
@@ -131,14 +151,17 @@ fn generated_native_player_mouse_play_pause_fullscreen_and_replay() {
             .unwrap()
             .success()
     );
+    let path = export_path(&store, "exports/generated.MP4").unwrap();
     let original = std::fs::read(&path).unwrap();
     let socket = temp.path().join("control.sock");
-    let (mut command, controls) = player_command(&store, true).unwrap();
+    let (mut command, controls) = player_command(&store, false).unwrap();
     command.arg(format!("--input-ipc-server={}", socket.display()));
     command.args([
         "--pause=yes",
         "--start=0",
         "--title=Storyfold generated native input fixture",
+        // Decode the selected AAC track without opening a physical audio sink.
+        "--ao=null",
     ]);
     command
         .env_remove("WAYLAND_DISPLAY")
@@ -146,6 +169,8 @@ fn generated_native_player_mouse_play_pause_fullscreen_and_replay() {
         .env("XDG_SESSION_TYPE", "x11");
     let mut player = SequencePlayer {
         _controls: controls,
+        #[cfg(target_os = "linux")]
+        timeline: None,
         child: command
             .arg("--")
             .arg(&path)
@@ -182,6 +207,14 @@ fn generated_native_player_mouse_play_pause_fullscreen_and_replay() {
         sequence: 0,
     };
     ipc.until("time-pos", Value::is_number, Duration::from_secs(10));
+    let audio = ipc.until(
+        "audio-params",
+        |value| value["samplerate"] == 48000,
+        Duration::from_secs(10),
+    );
+    assert_eq!(audio["channel-count"], 2);
+    assert_eq!(ipc.get("mute"), false);
+    assert!(ipc.get("volume").as_f64().unwrap() > 0.);
     assert_eq!(ipc.get("pause"), true);
     // The helper locates only this child PID/title on its fresh Xvfb display,
     // then clicks the installed mpv bottombar through the OS input pipeline.
@@ -255,6 +288,6 @@ fn generated_native_player_mouse_play_pause_fullscreen_and_replay() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), original);
     println!(
-        "Real OS X11/XTest controls on owned Xvfb: Play/Pause, clock pause, Fullscreen, Escape, natural EOF/replay; IPC observation only; original MP4 unchanged"
+        "Real OS X11/XTest controls on owned Xvfb: Play/Pause, clock pause, Fullscreen, Escape, natural EOF/replay; AAC48kHz stereo decoding unmuted into test-only null sink; IPC observation only; original MP4 unchanged"
     );
 }

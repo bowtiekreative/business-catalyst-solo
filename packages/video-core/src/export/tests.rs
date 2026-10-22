@@ -334,6 +334,24 @@ fn audio_rms(path: &std::path::Path, start: &str) -> f64 {
 #[test]
 #[ignore = "Explicit generated-only full sequence MP4 export/overlay/progress integration"]
 fn generated_sequence_both_shapes_has_exact_frames_audio_overlay_and_local_version() {
+    generated_sequence_contract(false);
+}
+#[cfg(feature = "capture-test")]
+#[test]
+#[ignore = "Explicit generated-only GPU-required export of both shapes/cuts/audio/shared overlays; STORYFOLD_GPU_EXPORT_TEST=1"]
+fn generated_gpu_sequence_both_shapes_keeps_cut_audio_overlay_and_version_contract() {
+    assert_eq!(
+        std::env::var("STORYFOLD_GPU_EXPORT_TEST").as_deref(),
+        Ok("1")
+    );
+    assert!(
+        crate::encoding::prefer_gpu(),
+        "GPU-required fixture needs the GPU preference enabled"
+    );
+    generated_sequence_contract(true);
+}
+#[cfg(feature = "capture-test")]
+fn generated_sequence_contract(require_gpu: bool) {
     let (temp, mut store, studio) = generated();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let originals = [
@@ -358,6 +376,22 @@ fn generated_sequence_both_shapes_has_exact_frames_audio_overlay_and_local_versi
                 |event| progress.push(event),
             )
             .unwrap();
+            if require_gpu {
+                let backend = crate::encoding::VideoEncoder::Nvidia.label();
+                let encoding_events: Vec<_> = progress
+                    .iter()
+                    .filter(|p| {
+                        matches!(p.phase, ExportPhase::PreparingClips | ExportPhase::Encoding)
+                    })
+                    .collect();
+                assert!(
+                    !encoding_events.is_empty()
+                        && encoding_events
+                            .iter()
+                            .all(|event| event.message.contains(backend)),
+                    "GPU-required export must actually select NVENC in both stages, not silently pass on CPU"
+                );
+            }
             let path = outcome.artifact.path(&store).unwrap();
             assert!(
                 audio_rms(&path, "0") < 0.001,

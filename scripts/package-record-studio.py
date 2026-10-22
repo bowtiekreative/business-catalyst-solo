@@ -82,7 +82,7 @@ Section: video
 Priority: optional
 Architecture: {architecture}
 Maintainer: Storyfold maintainers
-Depends: libc6 (>= {glibc}), libgcc-s1, libstdc++6, libx11-6, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libgl1, libegl1, libdbus-1-3, ffmpeg, mpv, tesseract-ocr, python3 (>= 3.10)
+Depends: libc6 (>= {glibc}), libgcc-s1, libstdc++6, libx11-6, libxcursor1, libxrandr2, libxi6, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libgl1, libegl1, libdbus-1-3, ffmpeg, mpv, pulseaudio-utils, tesseract-ocr, python3 (>= 3.10)
 Recommends: chromium-browser | google-chrome-stable, gnome-keyring
 Description: Storyfold native Record studio
  Continuous local recording, ordered takes, reviewed cards and sequence export.
@@ -163,7 +163,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/sidebar-video')
     parser.add_argument('--output', type=Path, default=ROOT / 'dist')
-    parser.add_argument('--version', default='0.1.2')
+    parser.add_argument('--version', default='0.1.9')
     parser.add_argument('--install-user', action='store_true')
     args = parser.parse_args()
     regular(args.binary, allow_hardlinks=True)

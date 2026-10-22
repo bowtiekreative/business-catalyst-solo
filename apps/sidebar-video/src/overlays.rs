@@ -378,15 +378,24 @@ impl OverlaysUi {
                 }
             });
         if let Some((slot, result)) = image {
-            self.image = None;
-            match result {
-                Ok(Some(path)) => {
-                    if let Some(d) = self.draft.as_mut().filter(|d| d.slot == slot) {
-                        d.content.image = Some(path);
+            let pending = self.image.take().expect("pending image outcome");
+            if pending.cancel.is_cancelled() {
+                // A published image can arrive before its worker sees Cancel.
+                // Retain the file, but do not attach it to the current card.
+                self.error = Some(
+                    "Image import canceled. The card is unchanged; any imported image stays saved."
+                        .into(),
+                );
+            } else {
+                match result {
+                    Ok(Some(path)) => {
+                        if let Some(d) = self.draft.as_mut().filter(|d| d.slot == slot) {
+                            d.content.image = Some(path);
+                        }
                     }
+                    Ok(None) => {}
+                    Err(e) => self.error = Some(e),
                 }
-                Ok(None) => {}
-                Err(e) => self.error = Some(e),
             }
         }
         if self.image.is_some() {
@@ -642,6 +651,55 @@ mod tests {
             content: OverlayContent::new(OverlayKind::Quote, "Later card edit"),
         });
         assert_eq!(project.studio().cues()[0].content(), Some(&content));
+    }
+    #[test]
+    fn canceled_completed_image_import_preserves_the_existing_card_image() {
+        let ctx = egui::Context::default();
+        let mut project = Workspace::default();
+        let mut ui = OverlaysUi::default();
+        let slot = SlotKey::try_from(1).unwrap();
+        let mut original = OverlayContent::new(OverlayKind::ScreenshotCard, "Original card");
+        original.image = Some("media/original.png".into());
+        ui.edit(slot, Some(original.clone()));
+        let (sender, receiver) = mpsc::channel();
+        ui.image = Some(ImagePending {
+            receiver,
+            slot,
+            cancel: Cancellation::default(),
+        });
+        // Force the real ACK boundary without opening a picker, importing a
+        // file, decoding an image or changing a user project.
+        sender
+            .send(Ok(Some("media/newly-published.png".into())))
+            .unwrap();
+        ui.image.as_ref().unwrap().cancel.cancel();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1160., 800.),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                ui.dialog(
+                    &mut project,
+                    video_core::OutputSize {
+                        width: 1280,
+                        height: 720,
+                    },
+                    ctx,
+                );
+            },
+        );
+        assert_eq!(
+            ui.draft.as_ref().unwrap().content.image,
+            original.image,
+            "Canceled image import changed the current card image"
+        );
+        assert_eq!(ui.draft.as_ref().unwrap().content.title, original.title);
+        assert!(!ui.busy());
+        assert!(project.studio().cues().is_empty());
     }
     #[test]
     #[allow(clippy::field_reassign_with_default)] // Drop cancels render work, so struct-update moves are unavailable.

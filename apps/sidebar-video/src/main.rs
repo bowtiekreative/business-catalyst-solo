@@ -7,6 +7,9 @@ mod input_probe;
 mod inserts;
 mod output;
 mod overlays;
+mod scrub;
+mod timeline;
+mod waveforms;
 use output::{Action, OutputUi};
 use overlays::OverlaysUi;
 mod workspace;
@@ -135,6 +138,9 @@ struct SidebarVideo {
     capture: CaptureUi,
     cards: OverlaysUi,
     output: OutputUi,
+    timeline: timeline::TimelineUi,
+    waveforms: waveforms::WaveformsUi,
+    scrub: scrub::ScrubUi,
     name_draft: String,
     selected: Option<ClipId>,
     playhead_ms: u64,
@@ -165,7 +171,10 @@ impl SidebarVideo {
             .is_some()
     }
     fn request(&mut self, intent: Intent, ctx: &egui::Context) {
-        if self.youtube.open || self.youtube.busy() {
+        if self.timeline.dragging() {
+            self.project.status =
+                "Release the timeline drag or press Escape before continuing.".into();
+        } else if self.youtube.open || self.youtube.busy() {
             self.project.status =
                 "Finish or close YouTube before replacing the project or closing.".into();
         } else if self.ai.open || self.ai.busy() {
@@ -217,6 +226,7 @@ impl SidebarVideo {
         }
     }
     fn edit(&mut self, edit: Edit) {
+        self.timeline.cancel();
         if let Some(EditOutcome::ClipSplit(clip)) = self.project.edit(edit) {
             self.selected = Some(clip);
         }
@@ -232,6 +242,7 @@ impl SidebarVideo {
         self.playhead_ms = self.playhead_ms.min(self.project.studio().duration_ms());
     }
     fn history(&mut self, redo: bool) {
+        self.timeline.cancel();
         if self.project.loading() {
             return;
         }
@@ -297,6 +308,22 @@ impl SidebarVideo {
                             {
                                 self.capture.find_recovery(&self.project, ctx);
                                 ui.close();
+                            }
+                            ui.separator();
+                            let mut prefer_gpu = video_core::encoding::prefer_gpu();
+                            if ui
+                                .add_enabled(
+                                    self.capture.can_leave() && !self.output.busy(),
+                                    egui::Checkbox::new(
+                                        &mut prefer_gpu,
+                                        "Prefer NVIDIA GPU encoding",
+                                    ),
+                                )
+                                .on_hover_text("Uses NVENC when available for the next recording or render. Audio, decoding and some video filters still use the CPU.")
+                                .changed()
+                            {
+                                video_core::encoding::set_prefer_gpu(prefer_gpu);
+                                self.output.encoding_changed();
                             }
                             ui.separator();
                             if ui.button("Save    Ctrl+S").clicked() {
@@ -512,7 +539,7 @@ impl SidebarVideo {
             (Action::Preview, false) => "Preview sequence",
             (Action::Export, false) => "Export MP4",
         };
-        if ui
+        let response = ui
             .add_enabled(
                 !self.project.busy()
                     && !self.output.busy()
@@ -526,12 +553,18 @@ impl SidebarVideo {
                     && (!self.project.studio().clips().is_empty() || self.capture.taking()),
                 egui::Button::new(label).min_size(egui::vec2(44., 44.)),
             )
+            .on_hover_text(match action {
+                Action::Preview => "Play your current cuts without exporting an MP4.",
+                Action::Export => "Render the finished MP4 and save a local project version.",
+            })
             .on_disabled_hover_text(
-                "Create a project and record or import a clip before preparing the sequence.",
-            )
-            .clicked()
-            && self.flush_name()
-        {
+                "Create a project and record or import a clip before previewing or exporting.",
+            );
+        #[cfg(feature = "validation-screenshot")]
+        if matches!(action, Action::Preview) {
+            input_probe::preview_control(&response);
+        }
+        if response.clicked() && self.flush_name() {
             self.output.request_from_button(
                 action,
                 &mut self.project,
@@ -565,8 +598,18 @@ impl SidebarVideo {
         if let Some(error) = &self.capture.error {
             ui.colored_label(Color32::from_rgb(160, 30, 45), error);
         }
+        if !self.capture.camera_running() {
+            if let Some(error) = &self.scrub.error {
+                ui.colored_label(Color32::from_rgb(160, 30, 45), error);
+            } else if self.scrub.busy() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Preparing source preview…");
+                });
+            }
+        }
         ui.add_space(12.);
-        let stage_height = (ui.available_height() - 214.).max(130.);
+        let stage_height = (ui.available_height() - 230.).max(90.);
         card(24).show(ui, |ui| {
             ui.set_min_size(egui::vec2(ui.available_width(), stage_height));
             ui.set_max_height(stage_height);
@@ -618,7 +661,13 @@ impl SidebarVideo {
                         });
                     },
                 );
-            } else if let Some(texture) = &self.capture.texture {
+            } else if let Some(texture) = self.capture.texture.as_ref().or_else(|| {
+                if !self.capture.camera_running() {
+                    self.scrub.texture.as_ref()
+                } else {
+                    None
+                }
+            }) {
                 let source = texture.size_vec2();
                 let ratio = (stage.width() / source.x).max(stage.height() / source.y);
                 let size = stage.size() / ratio / source;
@@ -682,7 +731,7 @@ impl SidebarVideo {
                         )
                     });
                 if waiting || busy {
-                    ui.put(
+                    ui.place(
                         egui::Rect::from_center_size(
                             label + egui::vec2(0., 60.),
                             egui::vec2(22., 22.),
@@ -698,6 +747,16 @@ impl SidebarVideo {
                     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
                     Color32::WHITE,
                 );
+            }
+            if self.project.store().is_some() {
+                let silent = self.capture.settings.microphone_id.is_none();
+                let area = egui::Rect::from_min_size(
+                    ui.max_rect().left_bottom() + egui::vec2(8., -38.),
+                    egui::vec2((ui.max_rect().width() - 16.).clamp(64., 320.), 30.),
+                );
+                let audio = ui.place(area, egui::Button::new(RichText::new(self.capture.audio_label()).size(13.).color(if silent {Color32::WHITE} else {INK})).fill(if silent {Color32::from_rgb(160,30,45)} else {CARD}).truncate())
+                    .on_hover_text("Choose the microphone in Camera settings. Stop the camera before changing audio input.");
+                if audio.clicked() { self.show_camera_settings(ui.ctx()); }
             }
         });
         ui.add_space(16.);
@@ -748,9 +807,8 @@ impl SidebarVideo {
                 )
                 .color(BODY),
             );
-            hint(ui, &self.capture.timer());
-            if self.capture.camera_running() {
-                ui.horizontal(|ui| {
+            ui.horizontal(|ui| {
+                if self.capture.camera_running() {
                     if ui.button("Stop camera").clicked() {
                         self.capture.stop();
                     }
@@ -769,23 +827,23 @@ impl SidebarVideo {
                     {
                         self.capture.cancel_take();
                     }
-                });
-            } else if self.project.store().is_some() {
-                if self.capture.busy() || self.capture.waiting_for_preview() {
-                    ui.horizontal(|ui| {
+                } else if self.project.store().is_some() {
+                    if self.capture.busy() || self.capture.waiting_for_preview() {
                         ui.spinner();
-                        ui.label(&self.capture.message);
-                    });
-                } else if ui
-                    .add_enabled(
-                        !self.project.busy() && self.capture.can_leave(),
-                        egui::Button::new("Choose camera…"),
-                    )
-                    .clicked()
-                {
-                    self.show_camera_settings(ui.ctx());
+                    } else if ui
+                        .add_enabled(
+                            !self.project.busy() && self.capture.can_leave(),
+                            egui::Button::new("Choose camera…"),
+                        )
+                        .clicked()
+                    {
+                        self.show_camera_settings(ui.ctx());
+                    }
                 }
-            }
+                let timer = self.capture.timer();
+                ui.add(egui::Label::new(RichText::new(&timer).size(12.).color(MUTED)).truncate())
+                    .on_hover_text(timer);
+            });
         });
     }
     fn sequence(&mut self, ctx: &egui::Context) {
@@ -830,70 +888,27 @@ impl SidebarVideo {
                             self.output_button(ui, Action::Preview);
                         });
                     });
-                    ui.add_enabled_ui(!self.project.loading(), |ui| {
-                        egui::ScrollArea::horizontal()
-                            .id_salt("sequence_clips")
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    let clips = self.project.studio().clips().to_vec();
-                                    if clips.is_empty() {
-                                        hint(
-                                            ui,
-                                            "Your takes will appear here in their recording order.",
-                                        );
-                                        ui.set_min_height(48.);
-                                    }
-                                    for (index, clip) in clips.iter().enumerate() {
-                                        self.clip_button(ui, clip, index, 160.);
-                                    }
-                                });
-                            });
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().slider_width = (ui.available_width() - 205.).max(100.);
-                            ui.add_sized(
-                                [ui.available_width() - 125., 44.],
-                                egui::Slider::new(
-                                    &mut self.playhead_ms,
-                                    0..=self.project.studio().duration_ms(),
-                                )
-                                .text("Playhead")
-                                .show_value(false),
-                            );
-                            ui.label(timecode(self.playhead_ms));
-                        });
-                        compact_row(ui, |ui| {
-                            ui.label(RichText::new("OVERLAYS").size(10.).color(MUTED));
-                            let cues = self.project.studio().cues();
-                            let active: Vec<_> = cues
-                                .iter()
-                                .filter_map(|cue| {
-                                    self.project
-                                        .studio()
-                                        .cue_sequence_time(cue.id())
-                                        .ok()
-                                        .map(|time| (cue, time))
-                                })
-                                .collect();
-                            if active.is_empty() {
-                                hint(ui, "No overlay cues in this sequence.");
-                            }
-                            egui::ScrollArea::horizontal()
-                                .id_salt("sequence_cues")
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        for (cue, time) in active {
-                                            hint(
-                                                ui,
-                                                &format!(
-                                                    "{} · {}",
-                                                    cue.slot().number(),
-                                                    timecode(time)
-                                                ),
-                                            );
-                                        }
-                                    });
-                                });
-                        });
+                    let interaction = self.timeline.show(
+                        ui,
+                        self.project.studio(),
+                        self.selected,
+                        self.playhead_ms,
+                        !self.project.loading(),
+                        &self.waveforms,
+                    );
+                    if let Some(clip) = interaction.selected {
+                        self.selected = Some(clip);
+                    }
+                    if let Some(edit) = interaction.edit {
+                        self.edit(edit);
+                    }
+                    if let Some(at) = interaction.seek {
+                        self.playhead_ms = at.min(self.project.studio().duration_ms());
+                    }
+                    if let Some(message) = interaction.message {
+                        self.project.status = message;
+                    }
+                    ui.add_enabled_ui(!self.project.loading() && !self.timeline.dragging(), |ui| {
                         ui.horizontal(|ui| {
                             let position = self.selected.and_then(|id| {
                                 self.project
@@ -1071,6 +1086,12 @@ impl SidebarVideo {
         }
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.timeline.dragging() {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.timeline.cancel();
+            }
+            return;
+        }
         if self.confirm.is_some()
             || self.trim.is_some()
             || self.version_summary.is_some()
@@ -1116,6 +1137,7 @@ impl SidebarVideo {
     fn show(&mut self, ctx: &egui::Context) {
         if self.project.poll(ctx) {
             self.output.reset();
+            self.timeline = timeline::TimelineUi::default();
             self.youtube.project_changed();
             self.name_draft = self.project.studio().name().into();
             self.selected = None;
@@ -1128,6 +1150,13 @@ impl SidebarVideo {
         if let Some(clip) = self.capture.poll(&mut self.project, ctx) {
             self.select(clip);
         }
+        self.scrub.tick(
+            &self.project,
+            self.playhead_ms,
+            self.capture.camera_running(),
+            self.timeline.draft_source_preview(),
+            ctx,
+        );
         self.output
             .after_capture(&mut self.project, &mut self.capture, ctx);
         self.ai.poll(&mut self.project, ctx);
@@ -1137,6 +1166,7 @@ impl SidebarVideo {
         self.cards
             .tick(&self.project, &self.capture, self.playhead_ms, ctx);
         self.header(ctx);
+        self.waveforms.tick(&self.project, ctx);
         self.sequence(ctx);
         egui::SidePanel::left("sidebar_takes")
             .exact_width(250.)
@@ -1214,7 +1244,8 @@ impl eframe::App for SidebarVideo {
                 || self.ai.open
                 || self.ai.busy()
                 || self.youtube.open
-                || self.youtube.busy())
+                || self.youtube.busy()
+                || self.timeline.dragging())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.request(Intent::Close, ctx);
@@ -1228,6 +1259,8 @@ impl eframe::App for SidebarVideo {
                 project_busy: self.project.busy(),
                 project_loading: self.project.loading(),
                 output_busy: self.output.busy(),
+                sequence_preview_open: self.output.probe_preview_state().0,
+                export_pending: self.output.probe_preview_state().1,
                 confirm: self.confirm.is_some(),
                 version: self.version_summary.is_some(),
                 trim: self.trim.is_some(),
@@ -1313,6 +1346,7 @@ fn main() -> eframe::Result {
                 assert!(folder.is_absolute() && !folder.exists());
                 app.project = Workspace::test_project(&folder);
                 app.name_draft = app.project.studio().name().into();
+                app.output.muted = true;
                 app.capture.enable_generated(&app.project, &cc.egui_ctx);
             }
             app.project
@@ -1349,11 +1383,72 @@ fn validation_timeline(app: &mut SidebarVideo) {
 mod tests {
     use super::*;
     #[test]
+    fn project_menu_exposes_gpu_preference_without_starting_devices() {
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        ctx.enable_accesskit();
+        let mut app = SidebarVideo::new();
+        let mut draw = |events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1480., 1000.),
+                    )),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| app.header(ctx),
+            )
+        };
+        let initial = draw(vec![]);
+        let bounds = initial
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .into_iter()
+            .find_map(|(_, n)| (n.label() == Some("Project")).then(|| n.bounds().unwrap()))
+            .unwrap();
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.) as f32,
+            ((bounds.y0 + bounds.y1) / 2.) as f32,
+        );
+        let pointer = |pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        draw(pointer(true));
+        let opened = draw(pointer(false));
+        assert!(
+            opened
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, n)| n.label() == Some("Prefer NVIDIA GPU encoding")),
+            "Project menu must expose the GPU encoding preference"
+        );
+        assert!(!app.capture.camera_running());
+        assert!(!app.capture.busy());
+        assert!(!app.output.busy());
+    }
+    #[test]
     fn both_shapes_expose_accessible_controls_and_keep_record_in_bounds() {
         let ctx = egui::Context::default();
         configure(&ctx);
         ctx.enable_accesskit();
         let mut app = SidebarVideo::new();
+        validation_timeline(&mut app);
         for (orientation, size) in [
             (Orientation::Horizontal, [1480., 1000.]),
             (Orientation::Vertical, [1160., 800.]),
@@ -1404,6 +1499,20 @@ mod tests {
                 "Record must fit above sequence: {bounds:?}"
             );
             assert!(bounds.x0 >= 0. && bounds.x1 <= f64::from(size[0]));
+            for action in ["Split at playhead", "Trim / name…", "Remove"] {
+                let b = update
+                    .nodes
+                    .iter()
+                    .find(|(_, node)| node.label() == Some(action))
+                    .unwrap()
+                    .1
+                    .bounds()
+                    .unwrap();
+                assert!(
+                    b.y0 >= f64::from(size[1] - 288.) && b.y1 <= f64::from(size[1] - 10.),
+                    "Sequence action must fit in its panel: {action} {b:?}"
+                );
+            }
             for action in ["Create project…", "Open project…"] {
                 let action_bounds = update
                     .nodes
